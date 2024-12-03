@@ -38,6 +38,7 @@ version = "=1.0.79"
 panic = "abort"
 lto = true
 opt-level = "s"
+overflow-checks = false
 
 [profile.release]
 panic = "abort"
@@ -45,3 +46,4 @@ codegen-units = 1
 debug = true
 lto = true
 opt-level = "s"
+overflow-checks = false
