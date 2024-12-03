@@ -32,7 +32,7 @@
     ],
     "gnu-lld-cc": [
       "-mmcu=atmega2560",
-      "-Wl,--as-needed,--print-memory-usage"
+      "-Wl,--as-needed,--print-memory-usage,--allow-multiple-definition"
     ]
   },
   "relocation-model": "static",

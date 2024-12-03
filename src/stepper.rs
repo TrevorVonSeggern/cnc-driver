@@ -53,7 +53,7 @@ impl Stepper {
             let a = self.stats.acceleration as f32;
             let vi = self.stats.instant_feed_rate as f32;
             let d = 1.0 / self.config.steps_per_mm as f32;
-            let t = (((2.0*a*d) + (vi*vi)).sqrt() + vi) / a;
+            let t = (((2.0*a*d) + (vi*vi)).sqrt() - vi) / a;
             return Some(t as u64 + self.stats.last_update);
         }
     }
