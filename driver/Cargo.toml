@@ -17,6 +17,11 @@ nb = "1.1.0"
 avr-device = { version = "0.3.4", features = ["atmega2560", "rt"] }
 embedded-hal = "0.2.3"
 micromath = "2.1.0"
+log = "0.4.22"
+ufmt_float = "0.2.0"
+
+[dependencies.library]
+path = "../library"
 
 [dependencies.arduino-hal]
 git = "https://github.com/rahix/avr-hal"
