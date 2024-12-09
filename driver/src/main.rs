@@ -5,16 +5,13 @@
 mod my_clock;
 mod stepper;
 mod machine;
+mod gcode_parser;
 
-
-use micromath::F32Ext;
 use panic_halt as _;
 use machine::Machine;
 use my_clock::{millis, millis_init};
-
-use ufmt_float::uFmt_f32;
-
-
+use stepper::float_to_u32_fraction;
+use embedded_hal::serial::{Read, Write};
 
 #[arduino_hal::entry]
 fn main() -> ! {
@@ -23,61 +20,78 @@ fn main() -> ! {
     millis_init(dp.TC0);
     unsafe { avr_device::interrupt::enable(); }
 
-    let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
-    ufmt::uwriteln!(&mut serial, "Startup").unwrap();
-
-    let test_data = [
-        (1.121948751, 1.113, 0.008948751058),
-        //(3.0, 0.0, 1.732050808),
-        //(4.0, 0.0, 2.0),
-        //(5.0, 0.0, 2.236067977),
-        //(6.0, 0.0, 2.449489743),
-    ];
-    for (a, b, expected) in test_data {
-        let r = b - a;
-        ufmt::uwriteln!(&mut serial, "{} {} => {} / {}", uFmt_f32::Two(a), uFmt_f32::Two(b), uFmt_f32::Four(r), uFmt_f32::Four(expected)).unwrap();
-    }
+    let (mut serial_read, mut serial_writer) = arduino_hal::default_serial!(dp, pins, 57600).split();
+    ufmt::uwriteln!(&mut serial_writer, "Startup").unwrap();
 
     let mut led = pins.d13.into_output();
-    let mut machine = Machine::default();
+    let mut machine = Machine::new();
     machine.x.config.steps_per_mm = 1.0;
-    machine.x.config.max_acceleration = 0.01;
+    machine.x.config.max_acceleration = 5.0;
     machine.x.config.max_feed_rate = f32::MAX;
-    machine.x.stats.max_feed_rate = machine.x.config.max_feed_rate;
-    machine.x.stats.acceleration = machine.x.config.max_acceleration;
-    machine.x.stats.instant_feed_rate = 0.0;
+    machine.x.stats.max_feed_rate = float_to_u32_fraction(10.0);
+    machine.x.stats.acceleration = float_to_u32_fraction(machine.x.config.max_acceleration);
     machine.x.stats.position = 0;
 
-        //let b = nb::block!(serial.read()).unwrap();
+    let parsed = library::parse("G0 X1 Y2 Z3\n");
+    if let Ok(parsed) = parsed {
+        ufmt::uwriteln!(&mut serial_writer, "parsed gcode {}.{}", parsed.command_id.major, parsed.command_id.minor).unwrap();
+    }
+    else if let Err(err) = parsed {
+        ufmt::uwriteln!(&mut serial_writer, "Parse error:").unwrap();
+        for &b in err.as_bytes() {
+            let _ = serial_writer.write(b);
+        }
+    }
+
     //ufmt::uwriteln!(&mut serial, "a: {}", (machine.x.stats.acceleration * 1000.0) as i32).unwrap();
-    let target = 100;
+    let target = 20;
+    //ufmt::uwriteln!(&mut serial, "Pre set target").unwrap();
+    machine.x.set_target(target);
+    //machine.x.set_target(target).map_err(|e| {
+        //ufmt::uwriteln!(&mut serial, "error: {}", e).unwrap();
+    //}).unwrap();
+    //ufmt::uwriteln!(&mut serial, "Set target").unwrap();
     let mut next_update = None;
-    let mut next_v = None;
     loop {
         let now = millis() as u64;
+        if let Ok(b) = serial_read.read() {
+            let _ = serial_writer.write(b).unwrap();
+            let _ = serial_writer.write(b'\n').unwrap();
+            let _ = serial_writer.flush().unwrap();
+        }
+
         if next_update.is_none() {
             let step_calc = machine.x.next_step_time();
-            machine.x.stats.instant_feed_rate = step_calc.map(|f| f.1).unwrap_or(0.0);
-            next_update = step_calc.map(|x| x.0 + now);
-            next_v = step_calc.map(|x| x.1);
-            ufmt::uwriteln!(&mut serial, "{}: {}ms ({}). v:{}",machine.x.stats.position, now, step_calc.unwrap().0,  (next_v.unwrap() * 1000.0) as i32).unwrap();
+            next_update = step_calc.0.map(|x| x as u64 + now);
+            //ufmt::uwriteln!(&mut serial, "{}: {}ms ({}). v:{}",machine.x.stats.position, now, (next_update.unwrap() - now),  vel as i32).unwrap();
         }
         if let Some(next_time) = next_update {
             if next_time <= now {
-                machine.x.step(now, next_v.unwrap_or(0.0));
+                machine.x.step();
                 led.toggle();
-                next_update = None;
-                next_v = None;
+                next_update = None; // triggers an update
             }
             if target == machine.x.stats.position {
                 // reset and ramp up again.
-                machine.x.stats.position = 0;
-                machine.x.stats.instant_feed_rate = 0.0;
-                machine.x.stats.last_update = now;
+                machine.x.set_position(0);
+                machine.x.set_target(target);
+                //machine.x.set_target(target).map_err(|e| {
+                    //ufmt::uwriteln!(&mut serial, "error: {}", e).unwrap();
+                //}).unwrap();
                 next_update = None;
-                next_v = None;
-                ufmt::uwriteln!(&mut serial, "reset position back to 0.").unwrap();
+                //ufmt::uwriteln!(&mut serial, "reset position back to 0.").unwrap();
             }
+        }
+        if now % 10 == 0 {
+            //if let Some(command) = parser.next() {
+                //let _ = command.line_number();
+                //match command.major_number() {
+                    //0 => { ufmt::uwriteln!(&mut serial, "g0 command").unwrap(); },
+                    //_ => {
+                        //ufmt::uwriteln!(&mut serial, "Unknown gcode command").unwrap();
+                    //},
+                //};
+            //}
         }
         arduino_hal::delay_us(100);
     }
