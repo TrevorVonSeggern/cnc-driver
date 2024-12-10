@@ -6,7 +6,7 @@ mod ast;
 mod lexer;
 mod parser;
 mod rules;
-//mod log;
+mod channel;
 
 pub use crate::lexer::*;
 pub use crate::parser::*;

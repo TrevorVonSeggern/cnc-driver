@@ -74,7 +74,7 @@ mod tests {
     fn lexer_run_rule_test() {
         let lexer = LexerStackAlloc::<char, 4> {
             rules: [
-                &|a| if a.starts_with("a") { Some(LexResult{ poped_chars: 1, result: 'a'} ) } else { None },
+                &|a| if a.starts_with("a") { Some(LexResult{ poped_chars: 1, result: 'a' }) } else { None },
                 &|b| if b.starts_with("b") { Some(LexResult{ poped_chars: 1, result: 'b' }) } else { None },
                 &|c| if c.starts_with("c") { Some(LexResult{ poped_chars: 1, result: 'c' }) } else { None },
                 &|d| if d.starts_with("d") { Some(LexResult{ poped_chars: 1, result: 'd' }) } else { None },
