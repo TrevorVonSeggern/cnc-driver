@@ -55,6 +55,7 @@ impl<F, FStep, FDir> Machine<F, FStep, FDir>
                         ufmt::uwrite!(buffer, "g0 x[{}]\n", numb_int).unwrap();
                         write_uart(buffer.as_str());
 
+                        //stepper.update_speed();
                         stepper.set_target(numb_int.into())
                     }
                 },

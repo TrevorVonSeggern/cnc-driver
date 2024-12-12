@@ -1,5 +1,5 @@
-use panic_halt as _;
 use stepgen::Stepgen;
+use library::first_step_delay;
 
 use crate::{machine::Axis, write_uart};
 
@@ -7,7 +7,7 @@ use crate::{machine::Axis, write_uart};
 pub struct Speed {
     pub speed: u32, // in units mm / s. 8bits for dec.
     pub acceleration: u32, // in units mm / s^2. 8bits for dec.
-    pub decceleration: u32, // in units mm / s^2. 8bits for dec.
+    //pub decceleration: u32, // in units mm / s^2. 8bits for dec.
 }
 
 #[derive(Default)]
@@ -43,7 +43,7 @@ pub struct Stepper<FStep, FDir> where FStep: FnMut(Axis), FDir: FnMut(Axis, bool
 }
 
 fn default_stepgen() -> stepgen::Stepgen {
-    Stepgen::new(1_000)
+    Stepgen::new(1_000_000)
 }
 
 pub fn float_to_u32_fraction(float: f32) -> u32 {
@@ -74,29 +74,31 @@ impl<FStep, FDir> Stepper<FStep, FDir> where FStep: FnMut(Axis), FDir: FnMut(Axi
         };
     }
 
-    fn reset_stepgen(&mut self) {
-        self.stepper = default_stepgen();
-        self.stepper.set_acceleration(5 << 8).unwrap();
-        self.stepper.set_target_speed(10 << 8).unwrap();
-    }
-    //fn reset_stepgen(&mut self) -> Result<&mut Self, &'static str> {
+    //fn reset_stepgen(&mut self) {
         //self.stepper = default_stepgen();
-        //self.stepper.set_acceleration(5 << 8).map_err(|e| match e { 
-            //stepgen::Error::TooSlow => "Acceleration too slow",
-            //stepgen::Error::TooFast => "Acceleration too fast",
-            //_ => "other error",
-        //})?;
-        //self.stepper.set_target_speed(10 << 8).map_err(|e| match e { 
-            //stepgen::Error::TooSlow => "Speed too slow.",
-            //stepgen::Error::TooFast => "Speed too fast.",
-            //_ => "other error",
-        //})?;
-        //return Ok(self);
+        //self.stepper.set_acceleration(5 << 8).unwrap();
+        //self.stepper.set_target_speed(10 << 8).unwrap();
     //}
+    fn reset_stepgen(&mut self) -> Result<&mut Self, &'static str> {
+        self.stepper = default_stepgen();
+        self.stepper.set_acceleration(self.current_move_speed.acceleration).map_err(|e| match e { 
+            stepgen::Error::TooSlow => "Acceleration too slow",
+            stepgen::Error::TooFast => "Acceleration too fast",
+            _ => "other error",
+        })?;
+        self.stepper.set_target_speed(self.current_move_speed.speed).map_err(|e| match e { 
+            stepgen::Error::TooSlow => "Speed too slow.",
+            stepgen::Error::TooFast => "Speed too fast.",
+            _ => "other error",
+        })?;
+        return Ok(self);
+    }
 
     fn calc_next_step(&mut self, now: u64) {
-        self.next_delay = self.stepper.next().map(|t| t >> 8);
-        self.next_update = self.next_delay.map(|d| d as u64 + now);
+        if self.target != self.position {
+            self.next_delay = self.stepper.next().map(|t| t >> 8);
+            self.next_update = self.next_delay.map(|d| d as u64 + now);
+        }
     }
 
     pub fn set_target(&mut self, target_step: i64) {
@@ -104,19 +106,18 @@ impl<FStep, FDir> Stepper<FStep, FDir> where FStep: FnMut(Axis), FDir: FnMut(Axi
         let v = target_step - self.position;
         (self.dir_fn)(self.axis, v.is_negative());
         let target_distance = v.abs() as u32;
-        self.reset_stepgen();
+        let _ = self.reset_stepgen().map_err(|e| {
+            write_uart("Unable to set target step: ");
+            write_uart(e);
+            write_uart("\n");
+        });
         let _ = self.stepper.set_target_step(target_distance as u32).map_err(|_| {
             write_uart("Unable to set target step\n");
         });
     }
 
-    #[allow(unused)]
-    pub fn set_position(&mut self, position: i64) {
-        self.position = position;
-    }
-
     fn step(&mut self) {
-        if (self.target - self.position).is_positive() {
+        if self.target > self.position {
             self.position += 1;
         }
         else {
@@ -136,6 +137,10 @@ impl<FStep, FDir> Stepper<FStep, FDir> where FStep: FnMut(Axis), FDir: FnMut(Axi
             if next_time <= now {
                 self.step();
                 self.calc_next_step(now);
+
+                //if self.target == self.position {
+                    //write_uart("done moving");
+                //}
             }
         }
         return self.target == self.position;

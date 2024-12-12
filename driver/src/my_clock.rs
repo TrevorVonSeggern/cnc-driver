@@ -1,5 +1,4 @@
 use core::cell;
-use panic_halt as _;
 
 // Possible Values:
 //
@@ -17,10 +16,11 @@ const TIMER_COUNTS: u32 = 250;
 
 const MILLIS_INCREMENT: u32 = PRESCALER * TIMER_COUNTS / 16000;
 
-static MILLIS_COUNTER: avr_device::interrupt::Mutex<cell::Cell<u32>> =
+static MILLIS_COUNTER: avr_device::interrupt::Mutex<cell::Cell<u64>> =
     avr_device::interrupt::Mutex::new(cell::Cell::new(0));
 
 pub fn millis_init(tc0: arduino_hal::pac::TC0) {
+    //arduino_hal::pac::TC
     // Configure the timer for the above interval (in CTC mode)
     // and enable its interrupt.
     tc0.tccr0a.write(|w| w.wgm0().ctc());
@@ -45,11 +45,11 @@ fn TIMER0_COMPA() {
     avr_device::interrupt::free(|cs| {
         let counter_cell = MILLIS_COUNTER.borrow(cs);
         let counter = counter_cell.get();
-        counter_cell.set(counter + MILLIS_INCREMENT);
+        counter_cell.set(counter + MILLIS_INCREMENT as u64);
     })
 }
 
-pub fn millis() -> u32 {
+pub fn millis() -> u64 {
     avr_device::interrupt::free(|cs| MILLIS_COUNTER.borrow(cs).get())
 }
 

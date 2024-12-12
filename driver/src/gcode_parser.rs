@@ -22,7 +22,7 @@ impl<SR, F> Parser<SR, F>
     }
 
     pub fn poll_task(&mut self) {
-        let parsed = library::parse("G0 X100 Y200 Z300");
+        let parsed = library::parse("G0 X10 Y30");
         if let Ok(cmd) = parsed {
             let _ = (self.send)(cmd);
         }

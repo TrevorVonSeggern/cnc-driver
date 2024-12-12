@@ -1,21 +1,24 @@
 #![no_std]
 #![no_main]
 #![feature(abi_avr_interrupt)]
+#![feature(optimize_attribute)]
+#![feature(asm_experimental_arch)]
 
 mod my_clock;
+mod stepper_interrupt;
 mod stepper;
 mod machine;
 mod gcode_parser;
 
-use arduino_hal::{clock::MHz16, hal::{port::{PE0, PE1}, Atmega}, pac::USART0, port::mode::{Input, Output}};
+use arduino_hal::{clock::MHz16, delay_ms, hal::{port::{PE0, PE1}, Atmega}, pac::USART0, port::mode::{Input, Output}};
 //use avr_device::interrupt::Mutex;
 use avr_hal_generic::{port::Pin, usart::UsartWriter, usart::UsartReader};
-use panic_halt as _;
 use stepper::{float_to_u32_fraction, Speed};
-use core::{cell::RefCell, mem::MaybeUninit};
+use stepper_interrupt::stepper_interrupt_init;
+use core::{arch::asm, cell::RefCell, mem::MaybeUninit, panic::PanicInfo};
 use library::GcodeCommand;
 use machine::Machine;
-use my_clock::millis_init;
+use my_clock::{millis, millis_init};
 use embedded_hal::{digital::v2::OutputPin, serial::Read, serial::Write};
 
 static mut WRITER: MaybeUninit<UsartWriter<Atmega, USART0, Pin<Input, PE0>, Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
@@ -30,6 +33,25 @@ pub fn write_uart(source: &str) {
     }
 }
 
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! {
+    write_uart("!panic handler!\n");
+    let dp = unsafe{arduino_hal::Peripherals::steal()};
+    let pins = arduino_hal::pins!(dp);
+    let mut led = pins.d13.into_output();
+    led.set_high();
+    loop {
+        for _ in 0..6 {
+            led.toggle();
+            delay_ms(200);
+        }
+        for _ in 0..6 {
+            led.toggle();
+            delay_ms(500);
+        }
+    }
+}
+
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
@@ -41,6 +63,7 @@ fn main() -> ! {
     unsafe {READER.write(serial_reader)};
 
     millis_init(dp.TC0);
+    stepper_interrupt_init(dp.TC1);
     unsafe { avr_device::interrupt::enable(); }
 
     //serial_writer.write(j);
@@ -72,7 +95,6 @@ fn main() -> ! {
         else { has_gcode.replace(Some(c)); Ok(()) }
     };
     let recieve_gcode = || has_gcode.take();
-        //ufmt::uwriteln!(&mut serial_writer, "parsed gcode {}.{}", c.command_id.major, c.command_id.minor).unwrap();
 
     let step_fn = |axis| {
         match axis {
@@ -88,22 +110,47 @@ fn main() -> ! {
             machine::Axis::Z => z_dir.borrow_mut().set_state(state.into()),
         };
     };
+
+    //let default_stepper_config = (Speed{
+        //speed: float_to_u32_fraction(10.0),
+        //acceleration: float_to_u32_fraction(5.0),
+        //decceleration: float_to_u32_fraction(5.0),
+    //}, 1);
     let default_stepper_config = (Speed{
-        speed: float_to_u32_fraction(100.0),
-        acceleration: float_to_u32_fraction(5.0),
-        decceleration: float_to_u32_fraction(5.0),
-    }, 1);
+        speed: float_to_u32_fraction(1600.0),
+        acceleration: float_to_u32_fraction(9000.0),
+    }, 637);
 
-    let mut parse_input = gcode_parser::Parser::new(move || unsafe{READER.assume_init_mut()}.read().or_else(|_| Err(())), send_gcode);
-    let mut machine = Machine::new(recieve_gcode, step_fn, dir_fn, [
-        default_stepper_config.clone(), // x
-        default_stepper_config.clone(), // y
-        default_stepper_config // z
-    ]);
+    //let mut parse_input = gcode_parser::Parser::new(move || unsafe{READER.assume_init_mut()}.read().or_else(|_| Err(())), send_gcode);
+    //let mut machine = Machine::new(recieve_gcode, step_fn, dir_fn, [
+        //default_stepper_config.clone(), // x
+        //default_stepper_config.clone(), // y
+        //default_stepper_config // z
+    //]);
 
-    parse_input.poll_task();
+    //parse_input.poll_task();
+    let mut counter = 0;
+    let mut first_now = millis();
     loop {
-        machine.poll_task();
+        //machine.poll_task();
+        for i in 0..300 {
+            //let a = library::first_step_delay(10.0 + i as f32);
+            //let a = library::first_step_delay(10 + (i % 2));
+            let a = library::inter_step_acc_delay(100, 1 + (i % 2));
+            if u32::MAX - a == counter {
+                write_uart("exiting\n");
+                panic!();
+            }
+        }
+
+        counter += 1;
+        if counter % 1000 == 0 {
+            let mut buffer: str_buf::StrBuf<20> = str_buf::StrBuf::new();
+            ufmt::uwrite!(buffer, "1k iter {}\n", millis() - first_now).unwrap();
+            write_uart(buffer.as_str());
+            first_now = millis();
+            panic!();
+        }
 
         //if next_update.is_none() {
             //let step_calc = machine.x.next_step_time();
@@ -138,7 +185,6 @@ fn main() -> ! {
                 ////};
             ////}
         //}
-        arduino_hal::delay_us(100);
     }
 }
 
