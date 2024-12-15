@@ -1,9 +1,10 @@
 use core::str::FromStr;
 use arrayvec::ArrayVec;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum CommandMnumonics {
     Unknown = 0,
+    #[default]
     G,
     M,
     N,
@@ -25,11 +26,14 @@ impl FromStr for CommandMnumonics {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum ArgumentMnumonic {
+    #[default]
     X,
     Y,
     Z,
+    P,
+    R,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -47,26 +51,26 @@ impl FromStr for ArgumentMnumonic {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct CommandId {
     pub mnumonic: CommandMnumonics,
     pub major: u16,
     pub minor: u16,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct MajorMinorNumber {
     pub major: i32,
     pub minor: u16,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct CommandArgument {
     pub mnumonic: ArgumentMnumonic,
     pub value: MajorMinorNumber,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct GcodeCommand {
     pub command_id: CommandId,
     pub arguments: ArrayVec<CommandArgument, 3>

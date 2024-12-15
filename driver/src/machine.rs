@@ -1,36 +1,35 @@
 use arrayvec::ArrayVec;
-use library::{ArgumentMnumonic, CommandId, CommandMnumonics, GcodeCommand};
+use library::{CommandId, CommandMnumonics, GcodeCommand, XYZData, XYZId};
 
-use crate::{my_clock::millis, stepper::{Speed, Stepper}, write_uart};
+use crate::{recieve_gcode, stepper::{Speed, StepDir, Stepper}, write_uart};
 
-#[derive(Clone, Copy)]
-pub enum Axis {X, Y, Z}
+const CLOCK_FACTOR: u32 = 16_000;
 
-pub struct Machine<FRecvGcode, FStep, FDir>
-where FRecvGcode : Fn() -> Option<GcodeCommand>,
-    FStep: FnMut(Axis),
-    FDir: FnMut(Axis, bool)
+pub struct Machine<SD: StepDir>
 {
-    pub x: Stepper<FStep, FDir>,
-    pub y: Stepper<FStep, FDir>,
-    pub z: Stepper<FStep, FDir>,
-    next_command: FRecvGcode,
+    pub steppers: XYZData<Stepper<SD, CLOCK_FACTOR>>,
+    step_resolution: XYZData<f32>,
     command_buffer: ArrayVec<GcodeCommand, 4>
 }
 
-impl<F, FStep, FDir> Machine<F, FStep, FDir>
-    where 
-        F: Fn() -> Option<GcodeCommand>,
-        FStep: FnMut(Axis) + Copy,
-        FDir: FnMut(Axis, bool) + Copy
+const MM_TICK_FACTOR: f32 = CLOCK_FACTOR as f32 / 100_000.0;
+
+impl Speed<f32> {
+    pub fn scale_speed_per_res(self, steps_per_mm: f32) -> Speed<u32> {
+        self.map(|s| (s * steps_per_mm as f32 * MM_TICK_FACTOR) as u32, |a| (a as f32 * steps_per_mm * MM_TICK_FACTOR) as u32)
+    }
+}
+
+impl<SD: StepDir> Machine<SD>
 {
-    pub fn new(next_command: F, step_fn: FStep, dir_fn: FDir, stepper_conf: [(Speed, u32); 3]) -> Self {
+    pub fn new(step_dir_fn: SD, stepper_conf: XYZData<Speed<f32>>, step_resolution: XYZData<f32>) -> Self {
+        let x = Stepper::new(XYZId::X, step_dir_fn.clone(), stepper_conf.x.scale_speed_per_res(step_resolution.x));
+        let y = Stepper::new(XYZId::Y, step_dir_fn.clone(), stepper_conf.y.scale_speed_per_res(step_resolution.y));
+        let z = Stepper::new(XYZId::Z, step_dir_fn.clone(), stepper_conf.z.scale_speed_per_res(step_resolution.z));
         Self {
-            x: Stepper::new(Axis::X, step_fn.clone(),   dir_fn, stepper_conf[0].0.clone(), stepper_conf[0].1),
-            y: Stepper::new(Axis::Y, step_fn.clone(),   dir_fn, stepper_conf[1].0.clone(), stepper_conf[1].1),
-            z: Stepper::new(Axis::Z, step_fn,           dir_fn, stepper_conf[2].0.clone(), stepper_conf[2].1),
+            steppers: XYZData { x, y, z },
+            step_resolution,
             command_buffer: Default::default(),
-            next_command,
         }
     }
 
@@ -38,45 +37,56 @@ impl<F, FStep, FDir> Machine<F, FStep, FDir>
         if let Some(command) = self.command_buffer.get(0) {
             match command.command_id {
                 CommandId{ mnumonic: CommandMnumonics::G, major: 0, minor: 0 } => {
-                    let mut min_acc = u32::MAX;
+                    //let mut min_acc = u32::MAX;
                     for arg in command.arguments.iter() {
-                        let stepper = match arg.mnumonic {
-                            ArgumentMnumonic::X => &mut self.x,
-                            ArgumentMnumonic::Y => &mut self.y,
-                            ArgumentMnumonic::Z => &mut self.z,
-                        };
-                        min_acc = min_acc.min(stepper.prog_speed.acceleration);
-                        // TODO: relative vs abs.
-                        // TODO: mm to step conversion with the fraction component.
-                        //let numb_int = stepper.steps_per_mm as i32 * arg.value.major;
-                        let numb_int = arg.value.major;
-
-                        let mut buffer: str_buf::StrBuf<20> = str_buf::StrBuf::new();
-                        ufmt::uwrite!(buffer, "g0 x[{}]\n", numb_int).unwrap();
-                        write_uart(buffer.as_str());
-
-                        //stepper.update_speed();
-                        stepper.set_target(numb_int.into())
+                        let id = XYZId::from_arg(arg.mnumonic);
+                        if let Some(id) = id {
+                            let stepper = self.steppers.match_id_mut(id);
+                            //min_acc = min_acc.min(stepper.prog_speed.acceleration);
+                            // TODO: relative vs abs.
+                            // TODO: mm to step conversion with the fraction component.
+                            //let numb_int = stepper.steps_per_mm as i32 * arg.value.major;
+                            let numb_int = (arg.value.major as f32 * self.step_resolution.match_id(id)) as i64;
+                            stepper.set_target(numb_int);
+                        }
                     }
                 },
                 _ => todo!("do no know how to process command."),
             }
         }
+        else {
+            write_uart("no next move. Full stop for motors.");
+            let _ = self.steppers.iter_mut().map(|s| s.stop());
+        }
     }
 
     pub fn poll_task(&mut self) {
-        let now = millis() as u64;
         if self.command_buffer.remaining_capacity() != 0 {
-            if let Some(next) = (self.next_command)() {
+            if let Some(next) = recieve_gcode() {
                 self.command_buffer.push(next);
-                self.setup_next_target();
+                if self.command_buffer.len() == 1 {
+                    self.setup_next_target();
+                }
             }
         }
         if self.command_buffer.len() != 0 {
-            let at_target = self.x.poll_task(now) && self.y.poll_task(now) && self.z.poll_task(now);
+            let at_target = self.steppers.x.on_target();
             if at_target {
                 self.command_buffer.remove(0);
                 self.setup_next_target();
+            }
+        }
+    }
+    pub fn step_monitor(&mut self, now: u64) {
+        if self.command_buffer.len() != 0 {
+            if !self.steppers.x.on_target() {
+                self.steppers.x.poll_task(now);
+            }
+            if !self.steppers.y.on_target() {
+                self.steppers.y.poll_task(now);
+            }
+            if !self.steppers.z.on_target() {
+                self.steppers.z.poll_task(now);
             }
         }
     }

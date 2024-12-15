@@ -1,148 +1,136 @@
-use stepgen::Stepgen;
-use library::first_step_delay;
-
-use crate::{machine::Axis, write_uart};
+use library::XYZId;
 
 #[derive(Default, Clone)]
-pub struct Speed {
-    pub speed: u32, // in units mm / s. 8bits for dec.
+pub struct Speed<T> {
+    pub speed: T, // in units mm / s. 8bits for dec.
     pub acceleration: u32, // in units mm / s^2. 8bits for dec.
-    //pub decceleration: u32, // in units mm / s^2. 8bits for dec.
 }
 
-#[derive(Default)]
-pub struct StepperConfig {
-    pub steps_per_mm: u32,
-    pub max_speed: Speed,
+impl<T> Speed<T> {
+    pub fn map<FS, FA, TN>(self, speed_fn: FS, acc_fn: FA) -> Speed<TN>
+        where FS: Fn(T) -> TN, FA : Fn(u32) -> u32
+    {
+        Speed::<TN> { speed: speed_fn(self.speed), acceleration: acc_fn(self.acceleration) }
+    }
 }
 
-//#[derive(Default)]
-//pub struct StepperStats {
-    //pub position: i64,
-    //pub max_feed_rate: u32, // in units mm / s
-    //pub acceleration: u32, // in units mm / s^2
-    //pub direction: bool, // true for positive
-//}
+#[derive(Clone, Default)]
+pub struct StepperTiming {
+    pub next_update_time: u64,
+    pub off_at: u64,
+    pub delay_duration: u32,
+}
 
-pub struct Stepper<FStep, FDir> where FStep: FnMut(Axis), FDir: FnMut(Axis, bool) {
-    axis: Axis,
-    step_fn: FStep,
-    dir_fn: FDir,
+const SIGNAL_LENGTH: u64 = 10;
 
-    pub steps_per_mm: u32,
-    pub max_speed: Speed,
-    pub prog_speed: Speed,
-    pub current_move_speed: Speed,
+impl StepperTiming {
+    pub fn update_needed(&self, now: u64) -> bool {
+        self.next_update_time != 0 && now >= self.next_update_time
+    }
 
-    //pub pins: StepperPins,
-    stepper: stepgen::Stepgen,
+    pub fn update(&mut self, delay: u32, now: Option<&u64>) {
+        self.delay_duration = delay;
+        if delay == 0 {
+            self.next_update_time = 0;
+            self.off_at = 0;
+        }
+        else if self.next_update_time != 0 {
+            self.off_at = self.next_update_time + SIGNAL_LENGTH;
+            self.next_update_time = self.next_update_time + delay as u64;
+        }
+        else {
+            self.off_at = *now.unwrap() + SIGNAL_LENGTH;
+            self.next_update_time = *now.unwrap() + delay as u64;
+        }
+    }
+}
+
+pub trait StepDir: Clone{
+    fn step(&self, axis: XYZId);
+    fn dir(&self, axis: XYZId, direction: bool);
+    fn output(&self, axis: XYZId) -> bool;
+}
+
+pub struct Stepper<SD: StepDir, const CLOCK_FACTOR: u32> {
+    axis: XYZId,
+    step_dir_fn: SD,
+    pub speed: Speed<u32>,
+
     position: i64,
     target: i64,
-    next_delay: Option<u32>,
-    next_update: Option<u64>,
+    acceleration_iteration: u32,
+    timing: StepperTiming,
+    slew_delay: u32,
 }
 
-fn default_stepgen() -> stepgen::Stepgen {
-    Stepgen::new(1_000_000)
-}
-
-pub fn float_to_u32_fraction(float: f32) -> u32 {
-    return (float as u32) << 8; // TODO: the fractional part.
-    //let integer = float.floor() as u32;
-    //let m = float * 
-    //let fraction = float - integer;
-    //return (integer << 8) | fraction;
-}
-
-impl<FStep, FDir> Stepper<FStep, FDir> where FStep: FnMut(Axis), FDir: FnMut(Axis, bool) {
-    pub fn new(axis: Axis, step_fn: FStep, dir_fn: FDir, stepper_speed: Speed, steps_per_mm: u32) -> Self {
+impl<SD: StepDir, const CLOCK_FACTOR: u32> Stepper<SD, CLOCK_FACTOR>{
+    pub fn new(axis: XYZId, step_dir_fn: SD, stepper_speed: Speed<u32>) -> Self {
         return Self {
             axis,
-            step_fn,
-            dir_fn,
-            steps_per_mm,
-            max_speed: stepper_speed.clone(),
-            prog_speed: stepper_speed.clone(),
-            current_move_speed: stepper_speed,
+            step_dir_fn,
+            speed: stepper_speed,
+            slew_delay: 0,
             //pins: StepperPins::default(),
             //stepper: Stepgen::new(1_000_000),
-            stepper: default_stepgen(),
+            //stepper: default_stepgen(),
             position: 0,
             target: 0,
-            next_delay: None,
-            next_update: None,
+            acceleration_iteration: 0,
+            timing: Default::default(),
         };
-    }
-
-    //fn reset_stepgen(&mut self) {
-        //self.stepper = default_stepgen();
-        //self.stepper.set_acceleration(5 << 8).unwrap();
-        //self.stepper.set_target_speed(10 << 8).unwrap();
-    //}
-    fn reset_stepgen(&mut self) -> Result<&mut Self, &'static str> {
-        self.stepper = default_stepgen();
-        self.stepper.set_acceleration(self.current_move_speed.acceleration).map_err(|e| match e { 
-            stepgen::Error::TooSlow => "Acceleration too slow",
-            stepgen::Error::TooFast => "Acceleration too fast",
-            _ => "other error",
-        })?;
-        self.stepper.set_target_speed(self.current_move_speed.speed).map_err(|e| match e { 
-            stepgen::Error::TooSlow => "Speed too slow.",
-            stepgen::Error::TooFast => "Speed too fast.",
-            _ => "other error",
-        })?;
-        return Ok(self);
-    }
-
-    fn calc_next_step(&mut self, now: u64) {
-        if self.target != self.position {
-            self.next_delay = self.stepper.next().map(|t| t >> 8);
-            self.next_update = self.next_delay.map(|d| d as u64 + now);
-        }
     }
 
     pub fn set_target(&mut self, target_step: i64) {
         self.target = target_step;
-        let v = target_step - self.position;
-        (self.dir_fn)(self.axis, v.is_negative());
-        let target_distance = v.abs() as u32;
-        let _ = self.reset_stepgen().map_err(|e| {
-            write_uart("Unable to set target step: ");
-            write_uart(e);
-            write_uart("\n");
-        });
-        let _ = self.stepper.set_target_step(target_distance as u32).map_err(|_| {
-            write_uart("Unable to set target step\n");
-        });
+        let displacement = target_step - self.position;
+        self.step_dir_fn.dir(self.axis, displacement.is_negative());
+        self.slew_delay = (CLOCK_FACTOR / self.speed.speed) as u32;
+        self.acceleration_iteration = 0;
     }
 
     fn step(&mut self) {
-        if self.target > self.position {
-            self.position += 1;
-        }
-        else {
-            self.position -= 1;
-        }
-        (self.step_fn)(self.axis);
-    }
+        self.position += if self.target > self.position { 1 } else { -1 };
+        self.step_dir_fn.step(self.axis);
 
-    pub fn poll_task(&mut self, now: u64) -> bool {
-        if self.target == self.position {
-            return true;
-        }
-        if self.next_update.is_none() {
-            self.calc_next_step(now);
-        }
-        if let Some(next_time) = self.next_update {
-            if next_time <= now {
-                self.step();
-                self.calc_next_step(now);
-
-                //if self.target == self.position {
-                    //write_uart("done moving");
-                //}
+        let mut delay = self.timing.delay_duration;
+        if ((self.target - self.position).abs() + 1) <= self.acceleration_iteration as i64 {
+            delay = library::inter_step_dec_delay(self.timing.delay_duration, self.acceleration_iteration) + 1;
+            self.acceleration_iteration = self.acceleration_iteration.saturating_sub(1);
+            if self.acceleration_iteration == 0 {
+                delay = 0;
             }
         }
-        return self.target == self.position;
+        else if self.timing.delay_duration != self.slew_delay {
+            self.acceleration_iteration = self.acceleration_iteration.saturating_add(1);
+            delay = library::inter_step_acc_delay(self.timing.delay_duration, self.acceleration_iteration);
+            if delay <= self.slew_delay {
+                delay = self.slew_delay;
+            }
+        }
+
+        self.timing.update(delay, None);
+    }
+
+    pub fn on_target(&self) -> bool {
+        self.target == self.position
+    }
+
+    pub fn poll_task(&mut self, now: u64) {
+        if self.on_target() {}
+        else if self.timing.next_update_time == 0 { // first step calc.
+            let first_step = library::first_step_delay::<CLOCK_FACTOR>(self.speed.acceleration).max(self.slew_delay);
+            self.timing.update(first_step.into(), Some(&now));
+        }
+        else if self.timing.off_at != 0 && now >= self.timing.off_at {
+            self.step_dir_fn.step(self.axis);
+            self.timing.off_at = 0;
+        }
+        else if self.timing.update_needed(now) {
+            self.step();
+        }
+    }
+
+    pub fn stop(&mut self) {
+        self.timing = Default::default();
     }
 }

@@ -1,5 +1,6 @@
 use library::GcodeCommand;
 
+#[allow(unused)]
 pub struct Parser<SR, F>
     where 
         F: Fn(GcodeCommand) -> Result<(), GcodeCommand>,

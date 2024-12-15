@@ -49,6 +49,7 @@ fn TIMER0_COMPA() {
     })
 }
 
+#[allow(unused)]
 pub fn millis() -> u64 {
     avr_device::interrupt::free(|cs| MILLIS_COUNTER.borrow(cs).get())
 }

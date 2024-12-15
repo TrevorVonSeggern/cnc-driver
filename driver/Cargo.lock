@@ -120,7 +120,6 @@ dependencies = [
  "portable-atomic",
  "proc-macro2",
  "static_cell",
- "stepgen",
  "str-buf",
  "ufmt 0.2.0",
 ]
@@ -319,12 +318,6 @@ checksum = "d89b0684884a883431282db1e4343f34afc2ff6996fe1f4a1664519b66e14c1e"
 dependencies = [
  "portable-atomic",
 ]
-
-[[package]]
-name = "stepgen"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bad6198a08da183f7673f2f64bd2ab563e4b6a57bb7ac9d6a21a975a1b1433e8"
 
 [[package]]
 name = "str-buf"

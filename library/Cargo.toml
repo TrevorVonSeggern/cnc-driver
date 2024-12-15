@@ -9,3 +9,4 @@ safe-regex = { version = "0.3.0", default-features = false }
 arrayvec = { version = "0.7.6", default-features = false }
 itertools = { version = "0.13.0", default-features = false }
 log = "0.4.22"
+micromath = "2.1.0"
