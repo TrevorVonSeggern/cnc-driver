@@ -54,7 +54,7 @@ pub fn parse(source: &str) -> Result<GcodeCommand, &'static str> {
             },
         ],
     };
-    let parser = ParserStackAlloc::<'_, ParseUnion, ParseTypeId, 4> {
+    let parser = ParserStackAlloc::<'_, ParseUnion, ParseTypeId, 5> {
         rules: [
             Rule{id: ParseTypeId::Arg, pattern: &[ParseTypeId::ArgId, ParseTypeId::Number], func: &|data| {
                 match data {
@@ -94,6 +94,9 @@ pub fn parse(source: &str) -> Result<GcodeCommand, &'static str> {
                     },
                     _ => None,
                 }
+            }},
+            Rule{id: ParseTypeId::ParsedCommand, pattern: &[ParseTypeId::ParsedCommand, ParseTypeId::NL], func: &|data| {
+                Some(core::mem::take(&mut data[0]))
             }},
         ]
     };

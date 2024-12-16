@@ -3,20 +3,20 @@
 #![feature(abi_avr_interrupt)]
 
 mod my_clock;
-mod stepper_interrupt;
 mod stepper;
 mod machine;
 mod gcode_parser;
 mod pins;
 
 use arduino_hal::delay_ms;
-use arrayvec::ArrayVec;
-use my_clock::millis;
-use pins::{init_static_pins, pin_output, pin_write, write_uart, Pin, PinAction};
+use my_clock::micros;
+use pins::{init_static_pins, pin_output, pin_write, write_uart, Pin, PinAction, READER};
 use stepper::{Speed, StepDir};
 use core::panic::PanicInfo;
-use library::{first_step_delay, inter_step_acc_delay, inter_step_dec_delay, CommandArgument, GcodeCommand, XYZData, XYZId};
+use library::{CommandArgument, GcodeCommand, XYZData, XYZId};
 use machine::Machine;
+
+use embedded_hal::serial::Read;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -59,6 +59,7 @@ fn pin_output_state(axis: XYZId) -> bool{
         XYZId::Z => pin_output(Pin::ZDir),
     }
 }
+
 #[derive(Clone, Copy)]
 pub struct DriverStaticStepDir;
 impl StepDir for DriverStaticStepDir {
@@ -68,13 +69,13 @@ impl StepDir for DriverStaticStepDir {
 }
 
 static STEPPER_SPEED: Speed<f32> = Speed::<f32>{
-    //speed: 1000.0,
-    //acceleration: 3000,
-    speed: 18.0,
-    acceleration: 900,
+    speed: 10000.0,
+    acceleration: 2000,
+    //speed: 18.0,
+    //acceleration: 900,
 };
-//static RESOLUTION:f32 = 1.0;
-static RESOLUTION:f32 = 637.0;
+static RESOLUTION:f32 = 1.0;
+//static RESOLUTION:f32 = 637.0;
 
 pub static mut HAS_GCODE: Option<GcodeCommand> = None;
 pub fn add_gcode_buffer(c: GcodeCommand) -> Result<(), GcodeCommand> {
@@ -97,36 +98,54 @@ pub static mut MACHINE: Option<Machine<DriverStaticStepDir>> = None;
 fn main() -> ! {
     unsafe{init_static_pins()};
 
-    //let mut parse_input = gcode_parser::Parser::new(move || unsafe{READER.assume_init_mut()}.read().or_else(|_| Err(())), send_gcode);
+    let mut parse_input = gcode_parser::Parser::new(move || unsafe{READER.assume_init_mut()}.read().or_else(|_| Err(())), add_gcode_buffer);
     unsafe{MACHINE = Some(Machine::new(DriverStaticStepDir{}, XYZData::from_clone(STEPPER_SPEED.clone()), XYZData::from_clone(RESOLUTION.clone())))};
 
     // command is g0 x100
     let mut parsed = GcodeCommand::default();
     let mut arg = CommandArgument::default();
-    arg.value.major = 800;
+    arg.value.major = 40000;
     parsed.arguments.push(arg);
 
-    let mut flipflip = false;
-    let mut next_command = parsed.clone();
+    //let mut flipflip = false;
+    //let mut next_command = parsed.clone();
 
-    //let _ = send_gcode(parsed);
+    //let _ = add_gcode_buffer(parsed);
     //parse_input.poll_task();
 
     unsafe { avr_device::interrupt::enable(); }
 
+    //let mut buffer: str_buf::StrBuf<100> = str_buf::StrBuf::new();
     delay_ms(1);
     let machine = unsafe{MACHINE.as_mut().unwrap()};
+    let mut counter: u32 = 0;
     loop {
-        machine.poll_task();
-        next_command = add_gcode_buffer(next_command).map(|()| {
-            write_uart("next command!\n");
-            let mut command = parsed.clone();
-            flipflip = !flipflip;
-            if flipflip {
-                command.arguments[0].value.major = 0;
-            }
-            command
-        }).unwrap_or_else(|c| c);
+        counter += 1;
+        parse_input.read_serial();
+        if counter % 100 == 0 {
+            parse_input.parse_buffer();
+        }
+        if counter % 10 == 0 {
+            machine.poll_task();
+        }
+        let axis = match counter % 3 {
+            0 => Some(XYZId::X),
+            1 => Some(XYZId::Y),
+            3 => Some(XYZId::Z),
+            _ => None,
+        };
+        if let Some(axis) = axis {
+            machine.step_monitor(micros(), axis);
+        }
+        //next_command = add_gcode_buffer(next_command).map(|()| {
+            //write_uart("next command!\n");
+            //let mut command = parsed.clone();
+            //flipflip = !flipflip;
+            //if flipflip {
+                //command.arguments[0].value.major = 0;
+            //}
+            //command
+        //}).unwrap_or_else(|c| c);
     }
 }
 

@@ -3,7 +3,7 @@ use arduino_hal::{clock::MHz16, hal::{port::{PE0, PE1}, Atmega}, pac::USART0, po
 use avr_hal_generic::usart::{UsartReader, UsartWriter};
 use embedded_hal::serial::Write;
 
-use crate::{my_clock::millis_init, stepper_interrupt::stepper_interrupt_init};
+use crate::my_clock::clock_init;
 
 pub static mut LED: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PB7>> = MaybeUninit::uninit();
 pub static mut X_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PA4>> = MaybeUninit::uninit();
@@ -16,12 +16,15 @@ pub static mut Z_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::h
 pub static mut Z_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PL1>> = MaybeUninit::uninit();
 pub static mut Z_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PK0>> = MaybeUninit::uninit();
 
-static mut WRITER: MaybeUninit<UsartWriter<Atmega, USART0, arduino_hal::port::Pin<Input, PE0>, arduino_hal::port::Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
-static mut READER: MaybeUninit<UsartReader<Atmega, USART0, arduino_hal::port::Pin<Input, PE0>, arduino_hal::port::Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
+pub static mut WRITER: MaybeUninit<UsartWriter<Atmega, USART0, arduino_hal::port::Pin<Input, PE0>, arduino_hal::port::Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
+pub static mut READER: MaybeUninit<UsartReader<Atmega, USART0, arduino_hal::port::Pin<Input, PE0>, arduino_hal::port::Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
 
 pub fn write_uart(source: &str) {
+    write_uart_u8(source.as_bytes());
+}
+pub fn write_uart_u8(source: &[u8]) {
     let writer = unsafe{WRITER.assume_init_mut()};
-    let mut to_send = source.as_bytes().iter();
+    let mut to_send = source.iter();
     let mut n = to_send.next();
     while let Some(b) = n {
         let _ = writer.write(*b).map(|()| n = to_send.next());
@@ -31,8 +34,7 @@ pub fn write_uart(source: &str) {
 pub unsafe fn init_static_pins() {
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
-    millis_init(dp.TC0);
-    stepper_interrupt_init(dp.TC1);
+    clock_init(dp.TC0, dp.TC2);
     let serial = arduino_hal::default_serial!(dp, pins, 57600);
     let (serial_reader, serial_writer) = serial.split();
     unsafe {

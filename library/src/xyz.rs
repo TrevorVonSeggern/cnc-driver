@@ -2,7 +2,6 @@ use core::iter::once;
 
 use crate::ArgumentMnumonic;
 
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum XYZId { X, Y, Z }
 pub static XYZ_ID_LIST:[XYZId;3] = [XYZId::X, XYZId::Y, XYZId::Z];
@@ -51,6 +50,19 @@ impl<T> XYZData<T> {
             XYZId::Z => &mut self.z,
         }
     }
+
+    pub fn all(&self, predicate: impl Fn(&T) -> bool) -> bool {
+        predicate(&self.x) && predicate(&self.y) && predicate(&self.z)
+    }
+
+    pub fn one_map_mut<TR>(&mut self, axis: XYZId, action: impl Fn(&mut T) -> TR) -> TR {
+        match axis {
+            XYZId::X => action(&mut self.x),
+            XYZId::Y => action(&mut self.y),
+            XYZId::Z => action(&mut self.z),
+        }
+    }
+
 }
 
 impl XYZId {

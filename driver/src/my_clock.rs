@@ -1,7 +1,4 @@
-use core::cell;
-
-// Possible Values:
-//
+// Possible Values for ms:
 // ╔═══════════╦══════════════╦═══════════════════╗
 // ║ PRESCALER ║ TIMER_COUNTS ║ Overflow Interval ║
 // ╠═══════════╬══════════════╬═══════════════════╣
@@ -14,15 +11,16 @@ use core::cell;
 const PRESCALER: u32 = 64;
 const TIMER_COUNTS: u32 = 250;
 
-const MILLIS_INCREMENT: u32 = PRESCALER * TIMER_COUNTS / 16000;
+#[allow(non_camel_case_types)]
+type ms = u32;
 
-static MILLIS_COUNTER: avr_device::interrupt::Mutex<cell::Cell<u64>> =
-    avr_device::interrupt::Mutex::new(cell::Cell::new(0));
+const MILLIS_INCREMENT: ms = PRESCALER as ms * TIMER_COUNTS as ms / 16000;
 
-pub fn millis_init(tc0: arduino_hal::pac::TC0) {
-    //arduino_hal::pac::TC
-    // Configure the timer for the above interval (in CTC mode)
-    // and enable its interrupt.
+static mut MICROS_COUNTER: u32 = 0;
+static mut MILLIS_COUNTER: ms = 0;
+
+pub fn clock_init(tc0: arduino_hal::pac::TC0, tc2: arduino_hal::pac::TC2) {
+    //arduino_hal::pac::TC Configure the timer for the above interval (in CTC mode)
     tc0.tccr0a.write(|w| w.wgm0().ctc());
     tc0.ocr0a.write(|w| unsafe { w.bits(TIMER_COUNTS as u8) });
     tc0.tccr0b.write(|w| match PRESCALER {
@@ -34,23 +32,42 @@ pub fn millis_init(tc0: arduino_hal::pac::TC0) {
     });
     tc0.timsk0.write(|w| w.ocie0a().set_bit());
 
-    // Reset the global millisecond counter
-    avr_device::interrupt::free(|cs| {
-        MILLIS_COUNTER.borrow(cs).set(0);
-    });
+    // micros registers
+    tc2.tccr2a.write(|w| w.wgm2().ctc());
+    tc2.ocr2a.write(|w| unsafe { w.bits(125) });
+    tc2.tccr2b.write(|w| w.cs2().direct());
+    tc2.timsk2.write(|w| w.ocie2a().set_bit());
+
+    //tc1.tccr1a.write(|w| w.wgm1().bits(1));
+    //tc1.ocr1a.write(|w| unsafe { w.bits(125 as u16) });
+    //tc1.tccr1b.write(|w| w.cs1().direct());
+    //tc1.timsk1.write(|w| w.ocie1a().set_bit());
+    reset_time();
+}
+
+pub fn reset_time() {
+    unsafe{MILLIS_COUNTER = 0};
+    unsafe{MICROS_COUNTER = 0;}
 }
 
 #[avr_device::interrupt(atmega2560)]
 fn TIMER0_COMPA() {
-    avr_device::interrupt::free(|cs| {
-        let counter_cell = MILLIS_COUNTER.borrow(cs);
-        let counter = counter_cell.get();
-        counter_cell.set(counter + MILLIS_INCREMENT as u64);
-    })
+    unsafe{MILLIS_COUNTER+=MILLIS_INCREMENT};
+}
+
+#[avr_device::interrupt(atmega2560)]
+fn TIMER2_COMPA() {
+    unsafe{MICROS_COUNTER+=1};
 }
 
 #[allow(unused)]
-pub fn millis() -> u64 {
-    avr_device::interrupt::free(|cs| MILLIS_COUNTER.borrow(cs).get())
+pub fn millis() -> u32 {
+    (unsafe {MILLIS_COUNTER}) as u32
 }
 
+//const POST_SCALAR:f32 = 16.0 * 0.9921;
+pub fn micros() -> u64 {
+    let counter = unsafe {MICROS_COUNTER};
+    //(counter as f32 * POST_SCALAR) as u64
+    counter as u64 * 1000  / 128
+}
