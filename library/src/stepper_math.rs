@@ -1,3 +1,5 @@
+use core::iter::{once, repeat_with};
+
 // https://www.littlechip.co.nz/blog/a-simple-stepper-motor-control-algorithm
 use micromath::F32Ext;
 
@@ -69,6 +71,34 @@ pub fn inter_step_dec_delay(previous_delay: u32, step_number: u32) -> u32 {
     //let fourx = 4.0 * step_number as f32;
     //previous_delay as f32 * ((fourx - 1)/(fourx + 1))
 //}
+
+//pub enum AccelerationAction {
+    //Accelerating,
+    //Decelerating,
+    //AtSpeed,
+    //Stopped,
+//}
+
+//pub struct StepIterator {
+    //target: i32,
+    //position: i32,
+    //acceleration: u32,
+    //acc_iteration: u16,
+    //past_delay: u32,
+    //slew_delay: u32,
+//}
+
+//impl StepIterator {
+    //fn calculate_needed_action(&self) -> AccelerationAction {
+    //}
+
+    //#[allow(unused)]
+    //fn dosomething(&self) -> impl Iterator<Item=u32> + '_ {
+        //once(first_step_delay::<12>(12u32)) // first delay
+        //.chain(repeat_with(|| self.slew_delay).take_while(|_| self.target != self.position))
+    //}
+//}
+
 
 
 #[cfg(test)]

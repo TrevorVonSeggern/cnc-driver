@@ -47,7 +47,7 @@ impl StepperTiming {
     }
 }
 
-pub trait StepDir: Clone{
+pub trait StepDir: Clone {
     fn step(&self, axis: XYZId);
     fn dir(&self, axis: XYZId, direction: bool);
     fn output(&self, axis: XYZId) -> bool;
@@ -72,9 +72,6 @@ impl<SD: StepDir, const CLOCK_FACTOR: u32> Stepper<SD, CLOCK_FACTOR>{
             step_dir_fn,
             speed: stepper_speed,
             slew_delay: 0,
-            //pins: StepperPins::default(),
-            //stepper: Stepgen::new(1_000_000),
-            //stepper: default_stepgen(),
             position: 0,
             target: 0,
             acceleration_iteration: 0,
@@ -86,7 +83,7 @@ impl<SD: StepDir, const CLOCK_FACTOR: u32> Stepper<SD, CLOCK_FACTOR>{
     pub fn set_target(&mut self, target_step: i32) {
         self.target = target_step;
         let displacement = target_step - self.position;
-        self.direction = displacement.min(-1).max(1) as i8;
+        self.direction = displacement.clamp(-1, 1) as i8;
         self.step_dir_fn.dir(self.axis, displacement.is_negative());
         self.slew_delay = CLOCK_FACTOR / self.speed.speed as u32;
         self.acceleration_iteration = 0;
