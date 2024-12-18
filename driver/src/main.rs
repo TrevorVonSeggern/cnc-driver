@@ -119,8 +119,10 @@ fn main() -> ! {
     delay_ms(1);
     let machine = unsafe{MACHINE.as_mut().unwrap()};
     let mut counter: u32 = 0;
+    let mut axis_counter: u8 = 0;
     loop {
         counter += 1;
+        axis_counter += 1;
         parse_input.read_serial();
         if counter % 100 == 0 {
             parse_input.parse_buffer();
@@ -128,11 +130,11 @@ fn main() -> ! {
         if counter % 10 == 0 {
             machine.poll_task();
         }
-        let axis = match counter % 3 {
+        let axis = match axis_counter {
             0 => Some(XYZId::X),
             1 => Some(XYZId::Y),
-            3 => Some(XYZId::Z),
-            _ => None,
+            3 => {axis_counter = 0; Some(XYZId::Z)},
+            _ => {axis_counter = 0; None},
         };
         if let Some(axis) = axis {
             machine.step_monitor(micros(), axis);
