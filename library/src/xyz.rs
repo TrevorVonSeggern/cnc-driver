@@ -19,6 +19,16 @@ pub struct XYZData<T> {
     pub z: T,
 }
 
+impl<T> Default for XYZData<T> where T: Default {
+    fn default() -> Self {
+        return Self {
+            x: Default::default(),
+            y: Default::default(),
+            z: Default::default(),
+        }
+    }
+}
+
 impl<T> XYZData<T> {
     pub fn from_clone(state: T) -> Self where T: Clone {
         Self {
@@ -63,6 +73,9 @@ impl<T> XYZData<T> {
         }
     }
 
+    pub fn map<TR>(&self, p: impl Fn(&T) -> TR) -> XYZData<TR> {
+        XYZData { x: p(&self.x), y: p(&self.y), z: p(&self.z) }
+    }
 }
 
 impl XYZId {

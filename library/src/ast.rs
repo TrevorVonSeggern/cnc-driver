@@ -32,6 +32,7 @@ pub enum ArgumentMnumonic {
     X,
     Y,
     Z,
+    F,
     P,
     R,
 }

@@ -59,9 +59,9 @@ pub struct Stepper<SD: StepDir, const CLOCK_FACTOR: u32> {
     pub speed: Speed<u32>,
     direction: i8,
     position: i32,
-    target: i32,
+    pub target: i32,
     acceleration_iteration: u8,
-    pub timing: StepperTiming,
+    timing: StepperTiming,
     slew_delay: u32,
 }
 
@@ -87,7 +87,9 @@ impl<SD: StepDir, const CLOCK_FACTOR: u32> Stepper<SD, CLOCK_FACTOR>{
         self.step_dir_fn.dir(self.axis, displacement.is_negative());
         self.slew_delay = CLOCK_FACTOR / self.speed.speed as u32;
         self.acceleration_iteration = 0;
-        write_uart("set target\n");
+        let mut buffer: str_buf::StrBuf<100> = str_buf::StrBuf::new();
+        ufmt::uwrite!(buffer, "set target {} from {}\n", self.target, self.position).unwrap();
+        write_uart(buffer.as_str());
     }
 
     fn step(&mut self) {

@@ -37,6 +37,7 @@ impl<SR, F> Parser<SR, F>
         }
         if let Some(command) = self.to_send.take() {
             self.to_send = (self.send)(command).map(|_| None).unwrap_or_else(|e| Some(e));
+            //write_uart("#echo busy processing.\n");
         }
     }
 
@@ -58,9 +59,6 @@ impl<SR, F> Parser<SR, F>
                 }).ok();
             }
             self.input_bufer.drain(0..nl_index+1);
-        }
-        else {
-            write_uart("#echo busy processing.");
         }
         //if let Ok(parsed) = parsed {
             //ufmt::uwriteln!(&mut serial_writer, "parsed gcode {}.{}", parsed.command_id.major, parsed.command_id.minor).unwrap();

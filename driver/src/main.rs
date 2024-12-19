@@ -131,8 +131,8 @@ fn main() -> ! {
             machine.poll_task();
         }
         let axis = match axis_counter {
-            0 => Some(XYZId::X),
-            1 => Some(XYZId::Y),
+            1 => Some(XYZId::X),
+            2 => Some(XYZId::Y),
             3 => {axis_counter = 0; Some(XYZId::Z)},
             _ => {axis_counter = 0; None},
         };

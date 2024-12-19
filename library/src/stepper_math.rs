@@ -1,5 +1,3 @@
-use core::iter::{once, repeat_with};
-
 // https://www.littlechip.co.nz/blog/a-simple-stepper-motor-control-algorithm
 use micromath::F32Ext;
 

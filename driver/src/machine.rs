@@ -1,5 +1,7 @@
+use core::fmt::Arguments;
+
 use arrayvec::ArrayVec;
-use library::{CommandId, CommandMnumonics, GcodeCommand, XYZData, XYZId};
+use library::{CommandArgument, CommandId, CommandMnumonics, GcodeCommand, XYZData, XYZId};
 
 use crate::{recieve_gcode, stepper::{Speed, StepDir, Stepper}, write_uart};
 
@@ -9,7 +11,11 @@ const MM_TICK_FACTOR: f32 = CLOCK_FACTOR as f32 / 100_000.0;
 pub struct Machine<SD: StepDir>
 {
     pub steppers: XYZData<Stepper<SD, CLOCK_FACTOR>>,
-    step_resolution: XYZData<f32>,
+    motor_max_speed: XYZData<Speed<u32>>,
+    max_feed_rate: Speed<u32>,
+    feed_rate: Speed<u32>,
+    home_offset: XYZData<i32>,
+    pub step_resolution: XYZData<f32>,
     command_buffer: ArrayVec<GcodeCommand, 4>
 }
 
@@ -26,27 +32,61 @@ impl<SD: StepDir> Machine<SD>
         let y = Stepper::new(XYZId::Y, step_dir_fn.clone(), stepper_conf.y.scale_speed_per_res(step_resolution.y));
         let z = Stepper::new(XYZId::Z, step_dir_fn.clone(), stepper_conf.z.scale_speed_per_res(step_resolution.z));
         Self {
+            motor_max_speed: XYZData { x: x.speed.clone(), y: y.speed.clone(), z: z.speed.clone() },
+            feed_rate: x.speed.clone(),
+            max_feed_rate: x.speed.clone(),
             steppers: XYZData { x, y, z },
             step_resolution,
             command_buffer: Default::default(),
+            home_offset: Default::default(),
         }
+    }
+
+    fn move_command(&mut self, mut target: XYZData<Option<i32>>, speed: Speed<u32>) {
+        target.x = target.x.map(|x| x + self.home_offset.x);
+        target.y = target.x.map(|y| y + self.home_offset.y);
+        target.z = target.x.map(|z| z + self.home_offset.z);
+        for (target, stepper) in target.iter().zip(self.steppers.iter_mut()).filter_map(|(t, s)| t.map(|ss| (ss, s))) {
+            stepper.set_target(target);
+            stepper.speed = speed.clone();
+        }
+    }
+
+    fn feed_argument<'a>(&self, args: &GcodeCommand) -> Option<u32> {
+        let args = args.arguments.iter();
+        args.filter(|a| a.mnumonic == library::ArgumentMnumonic::F).next().map(|a| a.value.major as u32)
     }
 
     fn setup_next_target(&mut self) {
         if let Some(command) = self.command_buffer.get(0) {
             match command.command_id {
                 CommandId{ mnumonic: CommandMnumonics::G, major: 0, minor: 0 } => {
-                    //let mut min_acc = u32::MAX;
+                    let mut target = XYZData::<Option<i32>>::default();
                     for arg in command.arguments.iter() {
-                        let id = XYZId::from_arg(arg.mnumonic);
-                        if let Some(id) = id {
-                            let stepper = self.steppers.match_id_mut(id);
-                            //min_acc = min_acc.min(stepper.prog_speed.acceleration);
-                            // TODO: relative vs abs.
-                            // TODO: mm to step conversion with the fraction component.
-                            //let numb_int = stepper.steps_per_mm as i32 * arg.value.major;
-                            let numb_int = (arg.value.major as f32 * self.step_resolution.match_id(id)) as i32;
-                            stepper.set_target(numb_int);
+                        if let Some(id) = XYZId::from_arg(arg.mnumonic) {
+                            let resolution = self.step_resolution.match_id(id);
+                            *target.match_id_mut(id) = Some((arg.value.major as f32 * resolution) as i32);
+                        }
+                    }
+                    self.feed_rate.speed = self.feed_argument(&command).unwrap_or(self.feed_rate.speed);
+                    self.move_command(target, self.max_feed_rate.clone());
+                },
+                CommandId{ mnumonic: CommandMnumonics::G, major: 1, minor: 0 } => {
+                    let mut target = XYZData::<Option<i32>>::default();
+                    for arg in command.arguments.iter() {
+                        if let Some(id) = XYZId::from_arg(arg.mnumonic) {
+                            let resolution = self.step_resolution.match_id(id);
+                            *target.match_id_mut(id) = Some((arg.value.major as f32 * resolution) as i32);
+                        }
+                    }
+                    self.feed_rate.speed = self.feed_argument(&command).unwrap_or(self.feed_rate.speed);
+                    self.move_command(target, self.feed_rate.clone());
+                },
+                CommandId{ mnumonic: CommandMnumonics::G, major: 9, minor: 2 } => {
+                    for arg in command.arguments.iter() {
+                        if let Some(id) = XYZId::from_arg(arg.mnumonic) {
+                            let resolution = self.step_resolution.match_id(id);
+                            *self.home_offset.match_id_mut(id) = (arg.value.major as f32 * resolution) as i32;
                         }
                     }
                 },
