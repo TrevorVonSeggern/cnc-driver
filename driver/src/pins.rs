@@ -2,8 +2,9 @@ use core::mem::MaybeUninit;
 use arduino_hal::{clock::MHz16, hal::{port::{PE0, PE1}, Atmega}, pac::USART0, port::mode::{Input, Output}};
 use avr_hal_generic::usart::{UsartReader, UsartWriter};
 use embedded_hal::serial::Write;
+use library::XYZId;
 
-use crate::my_clock::clock_init;
+use crate::{my_clock::clock_init, stepper::StepDir};
 
 pub static mut LED: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PB7>> = MaybeUninit::uninit();
 pub static mut X_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PA4>> = MaybeUninit::uninit();
@@ -92,20 +93,20 @@ pub fn translate_pin_set<T: avr_hal_generic::port::PinOps>(action: PinAction, b_
     }
 }
 
-pub fn pin_output(pin:Pin) -> bool {
-    match pin {
-        Pin::Led => unsafe { &mut LED.assume_init_mut() }.is_set_high(),
-        Pin::XStep => unsafe { &mut X_STEP.assume_init_mut() }.is_set_high(),
-        Pin::YStep => unsafe { &mut Y_STEP.assume_init_mut() }.is_set_high(),
-        Pin::ZStep => unsafe { &mut Z_STEP.assume_init_mut() }.is_set_high(),
-        Pin::XDir => unsafe { &mut X_DIR.assume_init_mut() }.is_set_high(),
-        Pin::YDir => unsafe { &mut Y_DIR.assume_init_mut() }.is_set_high(),
-        Pin::ZDir => unsafe { &mut Z_DIR.assume_init_mut() }.is_set_high(),
-        Pin::XEnable => unsafe { &mut X_ENABLE.assume_init_mut() }.is_set_high(),
-        Pin::YEnable => unsafe { &mut Y_ENABLE.assume_init_mut() }.is_set_high(),
-        Pin::ZEnable => unsafe { &mut Z_ENABLE.assume_init_mut() }.is_set_high(),
-    }
-}
+//pub fn pin_output(pin:Pin) -> bool {
+    //match pin {
+        //Pin::Led => unsafe { &mut LED.assume_init_mut() }.is_set_high(),
+        //Pin::XStep => unsafe { &mut X_STEP.assume_init_mut() }.is_set_high(),
+        //Pin::YStep => unsafe { &mut Y_STEP.assume_init_mut() }.is_set_high(),
+        //Pin::ZStep => unsafe { &mut Z_STEP.assume_init_mut() }.is_set_high(),
+        //Pin::XDir => unsafe { &mut X_DIR.assume_init_mut() }.is_set_high(),
+        //Pin::YDir => unsafe { &mut Y_DIR.assume_init_mut() }.is_set_high(),
+        //Pin::ZDir => unsafe { &mut Z_DIR.assume_init_mut() }.is_set_high(),
+        //Pin::XEnable => unsafe { &mut X_ENABLE.assume_init_mut() }.is_set_high(),
+        //Pin::YEnable => unsafe { &mut Y_ENABLE.assume_init_mut() }.is_set_high(),
+        //Pin::ZEnable => unsafe { &mut Z_ENABLE.assume_init_mut() }.is_set_high(),
+    //}
+//}
 
 pub fn pin_write(pin:Pin, action:PinAction) {
     match pin {
@@ -120,4 +121,35 @@ pub fn pin_write(pin:Pin, action:PinAction) {
         Pin::YEnable => translate_pin_set(action, unsafe { &mut Y_ENABLE.assume_init_mut() }),
         Pin::ZEnable => translate_pin_set(action, unsafe { &mut Z_ENABLE.assume_init_mut() }),
     }
+}
+
+pub fn step(axis: XYZId) {
+    match axis {
+        XYZId::X => {pin_write(Pin::XStep, PinAction::Toggle)},
+        XYZId::Y => {pin_write(Pin::YStep, PinAction::Toggle)},
+        XYZId::Z => {pin_write(Pin::ZStep, PinAction::Toggle)},
+    }
+}
+
+pub fn direction(axis: XYZId, state: bool) {
+    match axis {
+        XYZId::X => pin_write(Pin::XDir, state.into()),
+        XYZId::Y => pin_write(Pin::YDir, state.into()),
+        XYZId::Z => pin_write(Pin::ZDir, state.into()),
+    }
+}
+//pub fn pin_output_state(axis: XYZId) -> bool{
+    //match axis {
+        //XYZId::X => pin_output(Pin::XDir),
+        //XYZId::Y => pin_output(Pin::YDir),
+        //XYZId::Z => pin_output(Pin::ZDir),
+    //}
+//}
+
+#[derive(Clone, Copy)]
+pub struct DriverStaticStepDir;
+impl StepDir for DriverStaticStepDir {
+    fn step(&self, axis: XYZId) { step(axis) }
+    fn dir(&self, axis: XYZId, d: bool) { direction(axis, d) }
+    //fn output(&self, axis: XYZId) -> bool { pin_output_state(axis) }
 }

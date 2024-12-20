@@ -1,9 +1,7 @@
-use core::fmt::Arguments;
-
 use arrayvec::ArrayVec;
-use library::{CommandArgument, CommandId, CommandMnumonics, GcodeCommand, XYZData, XYZId};
+use library::{CanRecieve, CommandId, CommandMnumonics, GcodeCommand, XYZData, XYZId};
 
-use crate::{recieve_gcode, stepper::{Speed, StepDir, Stepper}, write_uart};
+use crate::{stepper::{Speed, StepDir, Stepper}, write_uart};
 
 const CLOCK_FACTOR: u32 = 1_000_000;
 const MM_TICK_FACTOR: f32 = CLOCK_FACTOR as f32 / 100_000.0;
@@ -16,7 +14,7 @@ pub struct Machine<SD: StepDir>
     feed_rate: Speed<u32>,
     home_offset: XYZData<i32>,
     pub step_resolution: XYZData<f32>,
-    command_buffer: ArrayVec<GcodeCommand, 4>
+    command_buffer: ArrayVec<GcodeCommand, 2>
 }
 
 impl Speed<f32> {
@@ -99,9 +97,9 @@ impl<SD: StepDir> Machine<SD>
         }
     }
 
-    pub fn poll_task(&mut self) {
+    pub fn poll_task(&mut self, reciever: &impl CanRecieve<GcodeCommand>) {
         if self.command_buffer.remaining_capacity() != 0 {
-            if let Some(next) = recieve_gcode() {
+            if let Some(next) = reciever.recieve() {
                 self.command_buffer.push(next);
                 if self.command_buffer.len() == 1 {
                     self.setup_next_target();

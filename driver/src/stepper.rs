@@ -1,7 +1,5 @@
 use library::XYZId;
 
-use crate::pins::write_uart;
-
 #[derive(Default, Clone)]
 pub struct Speed<T> {
     pub speed: T, // in units mm / s. 8bits for dec.
@@ -50,7 +48,6 @@ impl StepperTiming {
 pub trait StepDir: Clone {
     fn step(&self, axis: XYZId);
     fn dir(&self, axis: XYZId, direction: bool);
-    fn output(&self, axis: XYZId) -> bool;
 }
 
 pub struct Stepper<SD: StepDir, const CLOCK_FACTOR: u32> {
@@ -87,9 +84,9 @@ impl<SD: StepDir, const CLOCK_FACTOR: u32> Stepper<SD, CLOCK_FACTOR>{
         self.step_dir_fn.dir(self.axis, displacement.is_negative());
         self.slew_delay = CLOCK_FACTOR / self.speed.speed as u32;
         self.acceleration_iteration = 0;
-        let mut buffer: str_buf::StrBuf<100> = str_buf::StrBuf::new();
-        ufmt::uwrite!(buffer, "set target {} from {}\n", self.target, self.position).unwrap();
-        write_uart(buffer.as_str());
+        //let mut buffer: str_buf::StrBuf<100> = str_buf::StrBuf::new();
+        //ufmt::uwrite!(buffer, "set target {} from {}\n", self.target, self.position).unwrap();
+        //write_uart(buffer.as_str());
     }
 
     fn step(&mut self) {

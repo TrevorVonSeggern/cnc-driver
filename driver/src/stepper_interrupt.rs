@@ -1,6 +1,6 @@
 use library::XYZId;
 
-use crate::{my_clock::micros, MACHINE};
+use crate::my_clock::micros;
 
 static mut TEST_COUNTER: u64 = 0;
 pub fn stepper_interrupt_init(treg: arduino_hal::pac::TC1) {

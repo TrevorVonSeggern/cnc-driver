@@ -1,14 +1,14 @@
 use core::str::from_utf8_unchecked;
 use arrayvec::ArrayVec;
-use library::GcodeCommand;
-use crate::pins::{write_uart, write_uart_u8};
+use library::{CanSend, GcodeCommand};
+use crate::pins::write_uart;
 
 const INPUT_BUFFER_SIZE: usize = 200;
 
 #[allow(unused)]
 pub struct Parser<SR, F>
     where 
-        F: Fn(GcodeCommand) -> Result<(), GcodeCommand>,
+        F: CanSend<GcodeCommand>,
         SR: FnMut() -> Result<u8, ()>,
 {
     send: F,
@@ -19,7 +19,7 @@ pub struct Parser<SR, F>
 
 impl<SR, F> Parser<SR, F>
     where
-        F: Fn(GcodeCommand) -> Result<(), GcodeCommand>,
+        F: CanSend<GcodeCommand>,
         SR: FnMut() -> Result<u8, ()>
 {
     pub fn new(reader: SR, send: F) -> Self {
@@ -35,9 +35,11 @@ impl<SR, F> Parser<SR, F>
         if let Ok(read_byte) = (self.serial_read)() {
             self.input_bufer.push(read_byte);
         }
-        if let Some(command) = self.to_send.take() {
-            self.to_send = (self.send)(command).map(|_| None).unwrap_or_else(|e| Some(e));
-            //write_uart("#echo busy processing.\n");
+        if self.to_send.is_some() {
+            self.to_send = self.send.send(self.to_send.take().unwrap()).map(|_| {
+                write_uart("ok\n");
+                None
+            }).unwrap_or_else(|e| Some(e));
         }
     }
 
@@ -51,10 +53,8 @@ impl<SR, F> Parser<SR, F>
                 let to_parse = self.input_bufer.split_at(nl_index).0;
                 let parsed = library::parse(unsafe{from_utf8_unchecked(to_parse)});
                 self.to_send = parsed.map_err(|err| {
-                    write_uart("unrecognized command:");
+                    write_uart("unrecognized command: ");
                     write_uart(&err);
-                    write_uart("\n");
-                    write_uart_u8(to_parse);
                     write_uart("\n");
                 }).ok();
             }

@@ -9,14 +9,23 @@ mod gcode_parser;
 mod pins;
 
 use arduino_hal::delay_ms;
-use my_clock::micros;
-use pins::{init_static_pins, pin_output, pin_write, write_uart, Pin, PinAction, READER};
-use stepper::{Speed, StepDir};
+use my_clock::*;
+use pins::*;
+use stepper::*;
+use library::*;
+use machine::*;
 use core::panic::PanicInfo;
-use library::{CommandArgument, GcodeCommand, XYZData, XYZId};
-use machine::Machine;
 
 use embedded_hal::serial::Read;
+
+static STEPPER_SPEED: Speed<f32> = Speed::<f32>{
+    //speed: 10000.0,
+    //acceleration: 2000,
+    speed: 18.0,
+    acceleration: 90,
+};
+static RESOLUTION:f32 = 1.0;
+//static RESOLUTION:f32 = 637.0;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -37,109 +46,71 @@ fn panic(_: &PanicInfo) -> ! {
     }
 }
 
-fn step(axis: XYZId) {
-    match axis {
-        XYZId::X => {pin_write(Pin::XStep, PinAction::Toggle); pin_write(Pin::Led, PinAction::Toggle);},
-        XYZId::Y => {pin_write(Pin::YStep, PinAction::Toggle)},
-        XYZId::Z => {pin_write(Pin::ZStep, PinAction::Toggle)},
+struct PollCounter {
+    counter: u8,
+    target: u8,
+}
+impl PollCounter {
+    fn new(target: u8) -> Self {
+        Self { target, counter: 0 }
+    }
+    fn poll_check(&mut self) -> Option<u8> {
+        let c = self.counter;
+        self.counter += 1;
+        if c == self.target { Some(c) }
+        else { None }
     }
 }
-
-fn direction(axis: XYZId, state: bool) {
-    match axis {
-        XYZId::X => pin_write(Pin::XDir, state.into()),
-        XYZId::Y => pin_write(Pin::YDir, state.into()),
-        XYZId::Z => pin_write(Pin::ZDir, state.into()),
-    }
-}
-fn pin_output_state(axis: XYZId) -> bool{
-    match axis {
-        XYZId::X => pin_output(Pin::XDir),
-        XYZId::Y => pin_output(Pin::YDir),
-        XYZId::Z => pin_output(Pin::ZDir),
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct DriverStaticStepDir;
-impl StepDir for DriverStaticStepDir {
-    fn step(&self, axis: XYZId) { step(axis) }
-    fn dir(&self, axis: XYZId, d: bool) { direction(axis, d) }
-    fn output(&self, axis: XYZId) -> bool { pin_output_state(axis) }
-}
-
-static STEPPER_SPEED: Speed<f32> = Speed::<f32>{
-    speed: 10000.0,
-    acceleration: 2000,
-    //speed: 18.0,
-    //acceleration: 900,
-};
-static RESOLUTION:f32 = 1.0;
-//static RESOLUTION:f32 = 637.0;
-
-pub static mut HAS_GCODE: Option<GcodeCommand> = None;
-pub fn add_gcode_buffer(c: GcodeCommand) -> Result<(), GcodeCommand> {
-    let full = unsafe{HAS_GCODE.is_some()};
-    if full {
-        Err(c)
-    }
-    else {
-        unsafe { HAS_GCODE = Some(c) };
-        Ok(())
-    }
-}
-pub fn recieve_gcode() -> Option<GcodeCommand>{
-    unsafe{HAS_GCODE.take()}
-}
-
-pub static mut MACHINE: Option<Machine<DriverStaticStepDir>> = None;
 
 #[arduino_hal::entry]
 fn main() -> ! {
     unsafe{init_static_pins()};
 
-    let mut parse_input = gcode_parser::Parser::new(move || unsafe{READER.assume_init_mut()}.read().or_else(|_| Err(())), add_gcode_buffer);
-    unsafe{MACHINE = Some(Machine::new(DriverStaticStepDir{}, XYZData::from_clone(STEPPER_SPEED.clone()), XYZData::from_clone(RESOLUTION.clone())))};
+    let reciever = SplitChannel::new(library::Channel::<GcodeCommand, 3>::default());
+    let sender = reciever.create_sender();
+
+    let mut parse_input = gcode_parser::Parser::new(move || unsafe{READER.assume_init_mut()}.read().or_else(|_| Err(())), sender);
+    let mut machine = Machine::new(DriverStaticStepDir{}, XYZData::from_clone(STEPPER_SPEED.clone()), XYZData::from_clone(RESOLUTION.clone()));
 
     // command is g0 x100
-    let mut parsed = GcodeCommand::default();
-    let mut arg = CommandArgument::default();
-    arg.value.major = 40000;
-    parsed.arguments.push(arg);
-
+    //let mut parsed = GcodeCommand::default();
+    //let mut arg = CommandArgument::default();
+    //arg.value.major = 100;
+    //parsed.arguments.push(arg);
     //let mut flipflip = false;
     //let mut next_command = parsed.clone();
-
-    //let _ = add_gcode_buffer(parsed);
-    //parse_input.poll_task();
+    //let sender2 = reciever.create_sender();
 
     unsafe { avr_device::interrupt::enable(); }
 
     //let mut buffer: str_buf::StrBuf<100> = str_buf::StrBuf::new();
     delay_ms(1);
-    let machine = unsafe{MACHINE.as_mut().unwrap()};
-    let mut counter: u32 = 0;
-    let mut axis_counter: u8 = 0;
+    let mut task_serial = PollCounter::new(5);
+    let mut task_parse = PollCounter::new(51);
+    let mut task_calc = PollCounter::new(51);
+    let mut task_step_counter = 0u8;
     loop {
-        counter += 1;
-        axis_counter += 1;
-        parse_input.read_serial();
-        if counter % 100 == 0 {
+        if let Some(_) = task_serial.poll_check() {
+            parse_input.read_serial();
+        }
+        if let Some(_) = task_parse.poll_check() {
             parse_input.parse_buffer();
         }
-        if counter % 10 == 0 {
-            machine.poll_task();
+        if let Some(_) = task_calc.poll_check() {
+            machine.poll_task(&reciever);
         }
-        let axis = match axis_counter {
+        let tsc = task_step_counter;
+        task_step_counter += 1;
+        let axis = match tsc {
             1 => Some(XYZId::X),
             2 => Some(XYZId::Y),
-            3 => {axis_counter = 0; Some(XYZId::Z)},
-            _ => {axis_counter = 0; None},
+            3 => {task_step_counter = 0; Some(XYZId::Z)},
+            _ => {task_step_counter = 0; None},
         };
         if let Some(axis) = axis {
             machine.step_monitor(micros(), axis);
         }
-        //next_command = add_gcode_buffer(next_command).map(|()| {
+        //next_command = sender2.send(next_command).map(|()| {
             //write_uart("next command!\n");
             //let mut command = parsed.clone();
             //flipflip = !flipflip;
