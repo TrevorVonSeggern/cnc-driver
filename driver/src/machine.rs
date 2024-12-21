@@ -6,6 +6,11 @@ use crate::{stepper::{Speed, StepDir, Stepper}, write_uart};
 const CLOCK_FACTOR: u32 = 1_000_000;
 const MM_TICK_FACTOR: f32 = CLOCK_FACTOR as f32 / 100_000.0;
 
+pub enum AbsMode {
+    Abs,
+    Relative,
+}
+
 pub struct Machine<SD: StepDir>
 {
     pub steppers: XYZData<Stepper<SD, CLOCK_FACTOR>>,
@@ -14,7 +19,8 @@ pub struct Machine<SD: StepDir>
     feed_rate: Speed<u32>,
     home_offset: XYZData<i32>,
     pub step_resolution: XYZData<f32>,
-    command_buffer: ArrayVec<GcodeCommand, 2>
+    command_buffer: ArrayVec<GcodeCommand, 2>,
+    abs_mode: AbsMode,
 }
 
 impl Speed<f32> {
@@ -37,13 +43,18 @@ impl<SD: StepDir> Machine<SD>
             step_resolution,
             command_buffer: Default::default(),
             home_offset: Default::default(),
+            abs_mode: AbsMode::Abs,
         }
     }
 
     fn move_command(&mut self, mut target: XYZData<Option<i32>>, speed: Speed<u32>) {
-        target.x = target.x.map(|x| x + self.home_offset.x);
-        target.y = target.x.map(|y| y + self.home_offset.y);
-        target.z = target.x.map(|z| z + self.home_offset.z);
+        let abs_offset = match self.abs_mode {
+            AbsMode::Abs => Default::default(),
+            AbsMode::Relative => XYZData { x: self.steppers.x.target, y: self.steppers.y.target, z: self.steppers.z.target },
+        };
+        target.x = target.x.map(|x| x + self.home_offset.x + abs_offset.x);
+        target.y = target.x.map(|y| y + self.home_offset.y + abs_offset.y);
+        target.z = target.x.map(|z| z + self.home_offset.z + abs_offset.z);
         for (target, stepper) in target.iter().zip(self.steppers.iter_mut()).filter_map(|(t, s)| t.map(|ss| (ss, s))) {
             stepper.set_target(target);
             stepper.speed = speed.clone();
@@ -87,6 +98,12 @@ impl<SD: StepDir> Machine<SD>
                             *self.home_offset.match_id_mut(id) = (arg.value.major as f32 * resolution) as i32;
                         }
                     }
+                },
+                CommandId{ mnumonic: CommandMnumonics::G, major: 9, minor: 0 } => {
+                    self.abs_mode = AbsMode::Abs;
+                },
+                CommandId{ mnumonic: CommandMnumonics::G, major: 9, minor: 1 } => {
+                    self.abs_mode = AbsMode::Relative;
                 },
                 _ => todo!("do no know how to process command."),
             }

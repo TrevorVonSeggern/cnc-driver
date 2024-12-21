@@ -73,13 +73,13 @@ fn main() -> ! {
     let mut machine = Machine::new(DriverStaticStepDir{}, XYZData::from_clone(STEPPER_SPEED.clone()), XYZData::from_clone(RESOLUTION.clone()));
 
     // command is g0 x100
-    //let mut parsed = GcodeCommand::default();
-    //let mut arg = CommandArgument::default();
-    //arg.value.major = 100;
-    //parsed.arguments.push(arg);
-    //let mut flipflip = false;
-    //let mut next_command = parsed.clone();
-    //let sender2 = reciever.create_sender();
+    let mut parsed = GcodeCommand::default();
+    let mut arg = CommandArgument::default();
+    arg.value.major = 100;
+    parsed.arguments.push(arg);
+    let mut flipflip = false;
+    let mut next_command = parsed.clone();
+    let sender2 = reciever.create_sender();
 
     unsafe { avr_device::interrupt::enable(); }
 
@@ -87,8 +87,8 @@ fn main() -> ! {
     delay_ms(1);
     let mut task_serial = PollCounter::new(5);
     let mut task_parse = PollCounter::new(51);
-    let mut task_calc = PollCounter::new(51);
-    let mut task_step_counter = 0u8;
+    let mut task_calc = PollCounter::new(10);
+    let mut task_step_counter:u8 = 0u8;
     loop {
         if let Some(_) = task_serial.poll_check() {
             parse_input.read_serial();
@@ -100,7 +100,6 @@ fn main() -> ! {
             machine.poll_task(&reciever);
         }
         let tsc = task_step_counter;
-        task_step_counter += 1;
         let axis = match tsc {
             1 => Some(XYZId::X),
             2 => Some(XYZId::Y),
@@ -110,15 +109,16 @@ fn main() -> ! {
         if let Some(axis) = axis {
             machine.step_monitor(micros(), axis);
         }
-        //next_command = sender2.send(next_command).map(|()| {
-            //write_uart("next command!\n");
-            //let mut command = parsed.clone();
-            //flipflip = !flipflip;
-            //if flipflip {
-                //command.arguments[0].value.major = 0;
-            //}
-            //command
-        //}).unwrap_or_else(|c| c);
+        task_step_counter += 1;
+        next_command = sender2.send(next_command).map(|()| {
+            write_uart("next command!\n");
+            let mut command = parsed.clone();
+            flipflip = !flipflip;
+            if flipflip {
+                command.arguments[0].value.major = 0;
+            }
+            command
+        }).unwrap_or_else(|c| c);
     }
 }
 
