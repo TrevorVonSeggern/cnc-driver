@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use library::{CanRecieve, CommandId, CommandMnumonics, GcodeCommand, XYZData, XYZId};
+use library::{u32sqrt, CanRecieve, CommandId, CommandMnumonics, GcodeCommand, XYZData, XYZId};
 
 use crate::{stepper::{Speed, StepDir, Stepper}, write_uart};
 
@@ -48,16 +48,30 @@ impl<SD: StepDir> Machine<SD>
     }
 
     fn move_command(&mut self, mut target: XYZData<Option<i32>>, speed: Speed<u32>) {
+        if target.all(|v| v.is_none()) {
+            return;
+        }
         let abs_offset = match self.abs_mode {
             AbsMode::Abs => Default::default(),
             AbsMode::Relative => XYZData { x: self.steppers.x.target, y: self.steppers.y.target, z: self.steppers.z.target },
         };
         target.x = target.x.map(|x| x + self.home_offset.x + abs_offset.x);
-        target.y = target.x.map(|y| y + self.home_offset.y + abs_offset.y);
-        target.z = target.x.map(|z| z + self.home_offset.z + abs_offset.z);
+        target.y = target.y.map(|y| y + self.home_offset.y + abs_offset.y);
+        target.z = target.z.map(|z| z + self.home_offset.z + abs_offset.z);
+        //let mut buffer = str_buf::StrBuf::<100>::new();
+        //ufmt::uwriteln!(buffer, "x {} y {} z {}", target.x.unwrap_or_default(), target.y.unwrap_or_default(), target.z.unwrap_or_default()).unwrap();
+        //write_uart(buffer.as_str());
+        let move_distance = u32sqrt(target.iter().filter_map(|v| *v).map(|v| (v * v) as u32).sum()).min(1);
         for (target, stepper) in target.iter().zip(self.steppers.iter_mut()).filter_map(|(t, s)| t.map(|ss| (ss, s))) {
+            if target == stepper.target {
+                continue;
+            }
+            let distance = (target - stepper.target).unsigned_abs();
+            let m = distance as f32 / move_distance as f32;
+            let next_speed = m * speed.speed as f32;
             stepper.set_target(target);
-            stepper.speed = speed.clone();
+            stepper.speed = Speed{acceleration: speed.acceleration, speed: (next_speed as u32)};
+            //stepper.speed = Speed{acceleration: speed.acceleration, speed: speed.speed};
         }
     }
 

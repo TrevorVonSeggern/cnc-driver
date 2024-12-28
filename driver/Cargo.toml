@@ -20,6 +20,7 @@ arrayvec = { version = "0.7.6", default-features = false }
 portable-atomic = { version = "1.10.0", features = ["fallback", "unsafe-assume-single-core"] }
 static_cell = "2.1.0"
 str-buf = { version = "3.0.3", features = ["ufmt-write"] }
+micromath = "2.1.0"
 
 [dependencies.library]
 path = "../library"

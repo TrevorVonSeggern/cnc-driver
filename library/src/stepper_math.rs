@@ -2,7 +2,7 @@
 use micromath::F32Ext;
 
 #[allow(unused)]
-fn u64sqrt(x0: u64) -> u64 {
+pub fn u64sqrt(x0: u64) -> u64 {
     let mut x = x0;
     let mut xr = 0; // result register
     let mut q2 = 0x4000_0000_0000_0000u64; // scan-bit register, set to highest possible result bit
@@ -21,7 +21,7 @@ fn u64sqrt(x0: u64) -> u64 {
 }
 
 #[allow(unused)]
-fn u32sqrt(x0: u32) -> u32 {
+pub fn u32sqrt(x0: u32) -> u32 {
     let mut x = x0;
     let mut xr = 0; // result register
     let mut q2 = 0x4000_0000u32; // scan-bit register, set to highest possible result bit
