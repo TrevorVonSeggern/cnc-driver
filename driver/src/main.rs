@@ -11,20 +11,18 @@ mod pins;
 use arduino_hal::delay_ms;
 use my_clock::*;
 use pins::*;
-use stepper::*;
 use library::*;
 use machine::*;
 use core::panic::PanicInfo;
 
 use embedded_hal::serial::Read;
 
-static STEPPER_SPEED: Speed<f32> = Speed::<f32>{
     //speed: 10000.0,
     //acceleration: 2000,
-    speed: 18.0,
-    acceleration: 90,
-};
-static RESOLUTION:f32 = 1.0;
+static STEPPER_SPEED: f32 = 18.0;
+static ACCELERATION: u32 = 500;
+//static RESOLUTION: f32 = 1.0;
+static RESOLUTION: f32 = 63.7;
 //static RESOLUTION:f32 = 637.0;
 
 #[panic_handler]
@@ -70,12 +68,12 @@ fn main() -> ! {
     let sender = reciever.create_sender();
 
     let mut parse_input = gcode_parser::Parser::new(move || unsafe{READER.assume_init_mut()}.read().or_else(|_| Err(())), sender);
-    let mut machine = Machine::new(DriverStaticStepDir{}, XYZData::from_clone(STEPPER_SPEED.clone()), XYZData::from_clone(RESOLUTION.clone()));
+    let mut machine = Machine::new(DriverStaticStepDir{}, XYZData::from_clone(STEPPER_SPEED.clone()), ACCELERATION, XYZData::from_clone(RESOLUTION.clone()));
 
     // command is g0 x100
     let mut parsed = GcodeCommand::default();
     let mut arg = CommandArgument::default();
-    arg.value.major = 100;
+    arg.value.major = 10;
     parsed.arguments.push(arg);
     let mut flipflip = false;
     let mut next_command = parsed.clone();
