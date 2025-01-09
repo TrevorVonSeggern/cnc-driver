@@ -7,15 +7,42 @@ use library::XYZId;
 use crate::{my_clock::clock_init, stepper::StepDir};
 
 pub static mut LED: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PB7>> = MaybeUninit::uninit();
-pub static mut X_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PA4>> = MaybeUninit::uninit();
-pub static mut X_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PA6>> = MaybeUninit::uninit();
-pub static mut X_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PA2>> = MaybeUninit::uninit();
+
+/*
+* Arduino mega ramps 1.4 pinout.
+* X Pins
+*   step    A0(PF0)
+*   dir     A1(PF1)
+*   enable  D38(PD7)
+* Y Pins
+*   step    A6(PF6)
+*   dir     A7(PF7)
+*   enable  A2(PF2)
+* Z Pins
+*   step    D46(PL3)
+*   dir     D48(PL1)
+*   enable  A8(PK0)
+* E0 Pins
+*   step    D26(PA4)
+*   dir     D28(PA6)
+*   enable  D24(PA2)
+* E1 Pins
+*   step    D36(PC1)
+*   dir     D34(PC3)
+*   enable  D30(PC7)
+*/
+
+// on my cnc I use the Z slot for X movement, and X for Z movement. Those are simply swapped.
+// Y2 is currently driven from Y, but I would like to switch to use E0 so I can control skew.
+pub static mut X_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PL3>> = MaybeUninit::uninit();
+pub static mut X_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PL1>> = MaybeUninit::uninit();
+pub static mut X_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PK0>> = MaybeUninit::uninit();
 pub static mut Y_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF6>> = MaybeUninit::uninit();
 pub static mut Y_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF7>> = MaybeUninit::uninit();
 pub static mut Y_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF2>> = MaybeUninit::uninit();
-pub static mut Z_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PL3>> = MaybeUninit::uninit();
-pub static mut Z_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PL1>> = MaybeUninit::uninit();
-pub static mut Z_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PK0>> = MaybeUninit::uninit();
+pub static mut Z_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF0>> = MaybeUninit::uninit();
+pub static mut Z_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF1>> = MaybeUninit::uninit();
+pub static mut Z_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PD7>> = MaybeUninit::uninit();
 
 pub static mut WRITER: MaybeUninit<UsartWriter<Atmega, USART0, arduino_hal::port::Pin<Input, PE0>, arduino_hal::port::Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
 pub static mut READER: MaybeUninit<UsartReader<Atmega, USART0, arduino_hal::port::Pin<Input, PE0>, arduino_hal::port::Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
@@ -24,6 +51,7 @@ pub fn write_uart(source: &str) {
     write_uart_u8(source.as_bytes());
 }
 pub fn write_uart_u8(source: &[u8]) {
+    #[allow(static_mut_refs)]
     let writer = unsafe{WRITER.assume_init_mut()};
     let mut to_send = source.iter();
     let mut n = to_send.next();
@@ -38,19 +66,20 @@ pub unsafe fn init_static_pins() {
     clock_init(dp.TC0, dp.TC2);
     let serial = arduino_hal::default_serial!(dp, pins, 57600);
     let (serial_reader, serial_writer) = serial.split();
+    #[allow(static_mut_refs)]
     unsafe {
         WRITER.write(serial_writer);
         READER.write(serial_reader);
         LED.write(pins.d13.into_output());
-        X_STEP.write(pins.d26.into_output());
-        X_DIR.write(pins.d28.into_output());
-        X_ENABLE.write(pins.d24.into_output());
+        X_STEP.write(pins.d46.into_output());
+        X_DIR.write(pins.d48.into_output());
+        X_ENABLE.write(pins.a8.into_output());
         Y_STEP.write(pins.a6.into_output());
         Y_DIR.write(pins.a7.into_output());
         Y_ENABLE.write(pins.a2.into_output());
-        Z_STEP.write(pins.d46.into_output());
-        Z_DIR.write(pins.d48.into_output());
-        Z_ENABLE.write(pins.a8.into_output());
+        Z_STEP.write(pins.a0.into_output());
+        Z_DIR.write(pins.a1.into_output());
+        Z_ENABLE.write(pins.d38.into_output());
     }
 }
 
@@ -108,6 +137,7 @@ pub fn translate_pin_set<T: avr_hal_generic::port::PinOps>(action: PinAction, b_
     //}
 //}
 
+#[allow(static_mut_refs)]
 pub fn pin_write(pin:Pin, action:PinAction) {
     match pin {
         Pin::Led => translate_pin_set(action, unsafe { &mut LED.assume_init_mut() }),
