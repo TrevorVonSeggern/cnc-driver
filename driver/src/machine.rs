@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
-use library::{u32sqrt, CanRecieve, CommandId, CommandMnumonics, GcodeCommand, XYZData, XYZId};
+use library::{u32sqrt, CanRecieve, CommandId, CommandMnumonics, GcodeCommand, StepDir, Stepper, XYZData, XYZId};
 
-use crate::{stepper::{StepDir, Stepper}, write_uart};
+use crate::write_uart;
 
 pub enum AbsMode {
     Abs,
@@ -21,6 +21,7 @@ pub struct Machine<SD: StepDir>
 }
 
 static mut ACC_CURVE: [u32; 1000] = [0; 1000];
+#[allow(static_mut_refs)]
 fn initialize_acc_curve(acc: u32) {
     unsafe{ACC_CURVE[0] = library::first_step_delay::<1_000_000>(acc);}
     let len = unsafe{ACC_CURVE.len()};
@@ -29,6 +30,7 @@ fn initialize_acc_curve(acc: u32) {
     }
 }
 
+#[allow(static_mut_refs)]
 impl<SD: StepDir> Machine<SD>
 {
     pub fn new(step_dir_fn: SD, stepper_conf: XYZData<f32>, stepper_acc: u32, step_resolution: XYZData<f32>) -> Self {
@@ -130,7 +132,10 @@ impl<SD: StepDir> Machine<SD>
         }
         else {
             write_uart("no next move. Full stop for motors.\n");
-            //let _ = self.steppers.iter_mut().map(|s| s.stop());
+
+            //let mut buffer: str_buf::StrBuf<100> = str_buf::StrBuf::new();
+            //ufmt::uwriteln!(buffer, "timing for x: {}, {}\n", self.steppers.x.timing.next_update_time, self.steppers.x.timing.delay_duration).unwrap();
+            //write_uart(buffer.as_str());
         }
     }
 
@@ -143,13 +148,12 @@ impl<SD: StepDir> Machine<SD>
                 }
             }
         }
-        if self.command_buffer.len() != 0 {
-            if self.steppers.all(|s| s.on_target()) {
-                self.command_buffer.remove(0);
-                self.setup_next_target();
-            }
+        if self.command_buffer.len() != 0 && self.steppers.all(|s| s.on_target()) {
+            self.command_buffer.remove(0);
+            self.setup_next_target();
         }
     }
+
     pub fn step_monitor(&mut self, now: u64, axis: XYZId) {
         if self.command_buffer.len() != 0 {
             // poll only one axis at a time for 'niceness'. This code executes in

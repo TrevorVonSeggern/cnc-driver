@@ -75,7 +75,7 @@ pub struct StepIterator {
     pub target: i32,
     pub position: i32,
     pub direction: i8,
-    acc_iteration: u8,
+    pub acc_iteration: u8,
     acc_iteration_stop: u8,
     slew_delay_us: u32,
     acc_table: &'static [u32],
@@ -139,16 +139,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn iter_acc_to_3_and_back() {
+    fn iter_acc_to_3_and_back_loop() {
         let mut step_iter = StepIterator::new(&[3, 2, 1]);
-        step_iter.set_target(6, 1, 0);
-        assert_eq!(step_iter.next(), Some(3));
-        assert_eq!(step_iter.next(), Some(2));
-        assert_eq!(step_iter.next(), Some(1));
-        assert_eq!(step_iter.next(), Some(1));
-        assert_eq!(step_iter.next(), Some(2));
-        assert_eq!(step_iter.next(), Some(3));
-        assert_eq!(step_iter.next(), None);
+        for i in 0..10 {
+            let target = if i % 2 == 0 { 6 } else { 0 };
+            step_iter.set_target(target, 1, 0);
+            assert_eq!(step_iter.next(), Some(3));
+            assert_eq!(step_iter.next(), Some(2));
+            assert_eq!(step_iter.next(), Some(1));
+            assert_eq!(step_iter.next(), Some(1));
+            assert_eq!(step_iter.next(), Some(2));
+            assert_eq!(step_iter.next(), Some(3));
+            assert_eq!(step_iter.next(), None);
+        }
     }
 
     #[test]

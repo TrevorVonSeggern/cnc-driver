@@ -3,27 +3,22 @@
 #![feature(abi_avr_interrupt)]
 
 mod my_clock;
-mod stepper;
 mod machine;
 mod gcode_parser;
 mod pins;
 
 use arduino_hal::delay_ms;
-use my_clock::*;
+use my_clock::micros;
 use pins::*;
 use library::*;
 use machine::*;
 use core::panic::PanicInfo;
 
-use embedded_hal::serial::Read;
-
-    //speed: 10000.0,
-    //acceleration: 2000,
 static STEPPER_SPEED: f32 = 18.0;
 static ACCELERATION: u32 = 500;
 //static RESOLUTION: f32 = 1.0;
-static RESOLUTION: f32 = 63.7;
-//static RESOLUTION:f32 = 637.0;
+//static RESOLUTION:f32 = 40.0; // 360/(1.8deg * 5mm lead)
+static RESOLUTION:f32 = 80.0; // 360/(1.8deg * 5mm lead) * 2 microstepping
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -61,30 +56,33 @@ impl PollCounter {
 }
 
 #[arduino_hal::entry]
+#[allow(static_mut_refs)]
 fn main() -> ! {
     unsafe{init_static_pins()};
 
     let reciever = SplitChannel::new(library::Channel::<GcodeCommand, 3>::default());
     let sender = reciever.create_sender();
 
-    let mut parse_input = gcode_parser::Parser::new(move || unsafe{READER.assume_init_mut()}.read().or_else(|_| Err(())), sender);
+    let mut parse_input = gcode_parser::Parser::new(sender);
     let mut machine = Machine::new(DriverStaticStepDir{}, XYZData::from_clone(STEPPER_SPEED.clone()), ACCELERATION, XYZData::from_clone(RESOLUTION.clone()));
 
     // command is g0 x100
-    let mut parsed = GcodeCommand::default();
-    let mut arg = CommandArgument::default();
-    arg.value.major = 10;
-    parsed.arguments.push(arg);
-    let mut flipflip = false;
-    let mut next_command = parsed.clone();
-    let sender2 = reciever.create_sender();
+    //let mut parsed = GcodeCommand::default();
+    //let mut arg = CommandArgument::default();
+    //arg.value.major = 50;
+    //parsed.arguments.push(arg);
+    //let mut flipflip = false;
+    //let mut next_command = parsed.clone();
+    //let sender2 = reciever.create_sender();
 
     unsafe { avr_device::interrupt::enable(); }
 
     //let mut buffer: str_buf::StrBuf<100> = str_buf::StrBuf::new();
-    delay_ms(1);
-    let mut task_serial = PollCounter::new(5);
-    let mut task_parse = PollCounter::new(51);
+            //ufmt::uwriteln!(buffer, "time for step monitor{}", diff).unwrap();
+            //write_uart(buffer.as_str());
+    delay_ms(1); // stepper polling requires that now(time) != 0.
+    let mut task_serial = PollCounter::new(1);
+    let mut task_parse = PollCounter::new(255);
     let mut task_calc = PollCounter::new(10);
     let mut task_step_counter:u8 = 0u8;
     loop {
@@ -97,6 +95,7 @@ fn main() -> ! {
         if let Some(_) = task_calc.poll_check() {
             machine.poll_task(&reciever);
         }
+
         let tsc = task_step_counter;
         let axis = match tsc {
             1 => Some(XYZId::X),
@@ -105,18 +104,20 @@ fn main() -> ! {
             _ => {task_step_counter = 0; None},
         };
         if let Some(axis) = axis {
-            machine.step_monitor(micros(), axis);
+            let now = micros();
+            machine.step_monitor(now, axis);
         }
         task_step_counter += 1;
-        next_command = sender2.send(next_command).map(|()| {
-            write_uart("next command!\n");
-            let mut command = parsed.clone();
-            flipflip = !flipflip;
-            if flipflip {
-                command.arguments[0].value.major = 0;
-            }
-            command
-        }).unwrap_or_else(|c| c);
+
+        //next_command = sender2.send(next_command).map(|()| {
+            //write_uart("next command!\n");
+            //let mut command = parsed.clone();
+            //flipflip = !flipflip;
+            //if flipflip {
+                //command.arguments[0].value.major = 0;
+            //}
+            //command
+        //}).unwrap_or_else(|c| c);
     }
 }
 

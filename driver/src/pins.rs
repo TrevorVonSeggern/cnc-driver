@@ -2,11 +2,9 @@ use core::mem::MaybeUninit;
 use arduino_hal::{clock::MHz16, hal::{port::{PE0, PE1}, Atmega}, pac::USART0, port::mode::{Input, Output}};
 use avr_hal_generic::usart::{UsartReader, UsartWriter};
 use embedded_hal::serial::Write;
-use library::XYZId;
+use library::{StepDir, XYZId};
 
-use crate::{my_clock::clock_init, stepper::StepDir};
-
-pub static mut LED: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PB7>> = MaybeUninit::uninit();
+use crate::my_clock::clock_init;
 
 /*
 * Arduino mega ramps 1.4 pinout.
@@ -40,9 +38,17 @@ pub static mut X_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal:
 pub static mut Y_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF6>> = MaybeUninit::uninit();
 pub static mut Y_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF7>> = MaybeUninit::uninit();
 pub static mut Y_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF2>> = MaybeUninit::uninit();
+pub static mut E0_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PA4>> = MaybeUninit::uninit();
+pub static mut E0_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PA6>> = MaybeUninit::uninit();
+pub static mut E0_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PA2>> = MaybeUninit::uninit();
+pub static mut E1_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PC1>> = MaybeUninit::uninit();
+pub static mut E1_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PC3>> = MaybeUninit::uninit();
+pub static mut E1_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PC7>> = MaybeUninit::uninit();
 pub static mut Z_STEP: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF0>> = MaybeUninit::uninit();
 pub static mut Z_DIR: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PF1>> = MaybeUninit::uninit();
 pub static mut Z_ENABLE: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PD7>> = MaybeUninit::uninit();
+
+pub static mut LED: MaybeUninit<arduino_hal::port::Pin<Output, arduino_hal::hal::port::PB7>> = MaybeUninit::uninit();
 
 pub static mut WRITER: MaybeUninit<UsartWriter<Atmega, USART0, arduino_hal::port::Pin<Input, PE0>, arduino_hal::port::Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
 pub static mut READER: MaybeUninit<UsartReader<Atmega, USART0, arduino_hal::port::Pin<Input, PE0>, arduino_hal::port::Pin<Output, PE1>, MHz16>> = MaybeUninit::uninit();
@@ -64,7 +70,8 @@ pub unsafe fn init_static_pins() {
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
     clock_init(dp.TC0, dp.TC2);
-    let serial = arduino_hal::default_serial!(dp, pins, 57600);
+    let mut serial = arduino_hal::default_serial!(dp, pins, 9600);
+    serial.listen(avr_hal_generic::usart::Event::RxComplete);
     let (serial_reader, serial_writer) = serial.split();
     #[allow(static_mut_refs)]
     unsafe {
@@ -77,6 +84,12 @@ pub unsafe fn init_static_pins() {
         Y_STEP.write(pins.a6.into_output());
         Y_DIR.write(pins.a7.into_output());
         Y_ENABLE.write(pins.a2.into_output());
+        E0_STEP.write(pins.d26.into_output());
+        E0_DIR.write(pins.d28.into_output());
+        E0_ENABLE.write(pins.d24.into_output());
+        E1_STEP.write(pins.d36.into_output());
+        E1_DIR.write(pins.d34.into_output());
+        E1_ENABLE.write(pins.d30.into_output());
         Z_STEP.write(pins.a0.into_output());
         Z_DIR.write(pins.a1.into_output());
         Z_ENABLE.write(pins.d38.into_output());
@@ -90,12 +103,18 @@ pub enum Pin {
     XStep,
     YStep,
     ZStep,
+    E0Step,
+    E1Step,
     XDir,
     YDir,
     ZDir,
+    E0Dir,
+    E1Dir,
     XEnable,
     YEnable,
     ZEnable,
+    E0Enable,
+    E1Enable,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -144,29 +163,41 @@ pub fn pin_write(pin:Pin, action:PinAction) {
         Pin::XStep => translate_pin_set(action, unsafe { &mut X_STEP.assume_init_mut() }),
         Pin::YStep => translate_pin_set(action, unsafe { &mut Y_STEP.assume_init_mut() }),
         Pin::ZStep => translate_pin_set(action, unsafe { &mut Z_STEP.assume_init_mut() }),
+        Pin::E0Step => translate_pin_set(action, unsafe { &mut E0_STEP.assume_init_mut() }),
+        Pin::E1Step => translate_pin_set(action, unsafe { &mut E1_STEP.assume_init_mut() }),
         Pin::XDir => translate_pin_set(action, unsafe { &mut X_DIR.assume_init_mut() }),
         Pin::YDir => translate_pin_set(action, unsafe { &mut Y_DIR.assume_init_mut() }),
         Pin::ZDir => translate_pin_set(action, unsafe { &mut Z_DIR.assume_init_mut() }),
+        Pin::E0Dir => translate_pin_set(action, unsafe { &mut E0_DIR.assume_init_mut() }),
+        Pin::E1Dir => translate_pin_set(action, unsafe { &mut E1_DIR.assume_init_mut() }),
         Pin::XEnable => translate_pin_set(action, unsafe { &mut X_ENABLE.assume_init_mut() }),
         Pin::YEnable => translate_pin_set(action, unsafe { &mut Y_ENABLE.assume_init_mut() }),
         Pin::ZEnable => translate_pin_set(action, unsafe { &mut Z_ENABLE.assume_init_mut() }),
+        Pin::E0Enable => translate_pin_set(action, unsafe { &mut E0_ENABLE.assume_init_mut() }),
+        Pin::E1Enable => translate_pin_set(action, unsafe { &mut E1_ENABLE.assume_init_mut() }),
     }
 }
 
 pub fn step(axis: XYZId) {
     match axis {
         XYZId::X => {pin_write(Pin::XStep, PinAction::Toggle)},
-        XYZId::Y => {pin_write(Pin::YStep, PinAction::Toggle)},
+        XYZId::Y => {
+            pin_write(Pin::YStep, PinAction::Toggle);
+            pin_write(Pin::E0Step, PinAction::Toggle);
+        },
         XYZId::Z => {pin_write(Pin::ZStep, PinAction::Toggle)},
-    }
+    };
 }
 
 pub fn direction(axis: XYZId, state: bool) {
     match axis {
         XYZId::X => pin_write(Pin::XDir, state.into()),
-        XYZId::Y => pin_write(Pin::YDir, state.into()),
+        XYZId::Y => {
+            pin_write(Pin::YDir, state.into());
+            pin_write(Pin::E0Dir, state.into());
+        },
         XYZId::Z => pin_write(Pin::ZDir, state.into()),
-    }
+    };
 }
 //pub fn pin_output_state(axis: XYZId) -> bool{
     //match axis {
@@ -179,7 +210,7 @@ pub fn direction(axis: XYZId, state: bool) {
 #[derive(Clone, Copy)]
 pub struct DriverStaticStepDir;
 impl StepDir for DriverStaticStepDir {
-    fn step(&self, axis: XYZId) { step(axis) }
-    fn dir(&self, axis: XYZId, d: bool) { direction(axis, d) }
+    fn step(&mut self, axis: XYZId) { step(axis) }
+    fn dir(&mut self, axis: XYZId, d: bool) { direction(axis, d) }
     //fn output(&self, axis: XYZId) -> bool { pin_output_state(axis) }
 }
