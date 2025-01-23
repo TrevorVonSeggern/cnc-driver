@@ -59,19 +59,20 @@ pub struct CommandId {
     pub minor: u16,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq)]
 pub struct MajorMinorNumber {
     pub major: i32,
     pub minor: u16,
+    pub float: f32,
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct CommandArgument {
     pub mnumonic: ArgumentMnumonic,
     pub value: MajorMinorNumber,
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct GcodeCommand {
     pub command_id: CommandId,
     pub arguments: ArrayVec<CommandArgument, 3>

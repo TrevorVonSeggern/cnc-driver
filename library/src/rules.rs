@@ -1,6 +1,5 @@
 use core::str::FromStr;
 use arrayvec::ArrayVec;
-
 use crate::{ast::{CommandArgument, CommandId, CommandMnumonics, GcodeCommand, MajorMinorNumber}, parser::ParserStackAlloc, ArgumentMnumonic, LexResult, LexerStackAlloc, LexerTrait, Rule, StateList, StateListStackAlloc};
 
 const LEXER_SIZE: usize = 5;
@@ -44,9 +43,17 @@ pub fn parse(source: &str) -> Result<GcodeCommand, &'static str> {
                     }
                     let neg = match sign_slice { [b'-'] => -1, _ => 1 };
                     let int = neg * i32::from_str(num_str).unwrap_or(0);
+                    //let whole_str = unsafe{core::str::from_utf8_unchecked(join_slices(sign_slice, decimal_slice))};
+                    let dec_oom = decimal_slice.len().saturating_sub(1);
+                    let mut dec_mul: u32 = 1;
+                    for _ in 0..dec_oom {
+                        dec_mul *= 10;
+                    }
                     let number = MajorMinorNumber {
                         major: int,
                         minor: dec,
+                        float: int as f32 + (dec as f32 / dec_mul as f32),
+                        //float: fast_float2::parse(whole_str).unwrap_or_default(),
                     };
                     Some(LexResult{result: ParseUnion::SignedNumber(number), poped_chars: sign_slice.len() + num_slice.len() + decimal_slice.len()} )
                 }
@@ -170,6 +177,52 @@ mod test {
             assert_eq!(e, "");
         }
         assert!(parsed.is_ok());
-        //assert_eq!(parsed, ParseUnion::None);
+        if let Ok(parsed) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 0);
+            assert_eq!(parsed.command_id.minor, 0);
+            let x = parsed.arguments[0].clone();
+            let y = parsed.arguments[1].clone();
+            let z = parsed.arguments[2].clone();
+            assert!(x.mnumonic == ArgumentMnumonic::X);
+            assert_eq!(x.value.major, 1);
+            assert_eq!(x.value.minor, 0);
+            assert!(y.mnumonic == ArgumentMnumonic::Y);
+            assert_eq!(y.value.major, 2);
+            assert_eq!(y.value.minor, 0);
+            assert!(z.mnumonic == ArgumentMnumonic::Z);
+            assert_eq!(z.value.major, 3);
+            assert_eq!(z.value.minor, 0);
+        }
+    }
+
+    #[test]
+    fn test_g1_floats() {
+        let source = "G1 X1.1 Y2.2 Z3.3";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(parsed) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 1);
+            assert_eq!(parsed.command_id.minor, 0);
+            let x = parsed.arguments[0].clone();
+            let y = parsed.arguments[1].clone();
+            let z = parsed.arguments[2].clone();
+            assert!(x.mnumonic == ArgumentMnumonic::X);
+            assert_eq!(x.value.major, 1);
+            assert_eq!(x.value.minor, 1);
+            assert_eq!(x.value.float, 1.1);
+            assert!(y.mnumonic == ArgumentMnumonic::Y);
+            assert_eq!(y.value.major, 2);
+            assert_eq!(y.value.minor, 2);
+            assert_eq!(y.value.float, 2.2);
+            assert!(z.mnumonic == ArgumentMnumonic::Z);
+            assert_eq!(z.value.major, 3);
+            assert_eq!(z.value.minor, 3);
+            assert_eq!(z.value.float, 3.3);
+        }
     }
 }

@@ -1,4 +1,4 @@
-use core::iter::once;
+use core::{iter::once, ops::Mul};
 
 use crate::ArgumentMnumonic;
 
@@ -17,6 +17,17 @@ pub struct XYZData<T> {
     pub x: T,
     pub y: T,
     pub z: T,
+}
+
+impl<T> Mul for XYZData<T> where T: Mul::<Output=T> {
+    type Output=XYZData<T>;
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self {
+            x: self.x * rhs.x,
+            y: self.y * rhs.y,
+            z: self.z * rhs.z,
+        }
+    }
 }
 
 impl<T> Default for XYZData<T> where T: Default {

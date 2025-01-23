@@ -3,7 +3,6 @@
 #![feature(abi_avr_interrupt)]
 
 mod my_clock;
-mod machine;
 mod gcode_parser;
 mod pins;
 
@@ -11,14 +10,7 @@ use arduino_hal::delay_ms;
 use my_clock::micros;
 use pins::*;
 use library::*;
-use machine::*;
 use core::panic::PanicInfo;
-
-static STEPPER_SPEED: f32 = 18.0;
-static ACCELERATION: u32 = 500;
-//static RESOLUTION: f32 = 1.0;
-//static RESOLUTION:f32 = 40.0; // 360/(1.8deg * 5mm lead)
-static RESOLUTION:f32 = 80.0; // 360/(1.8deg * 5mm lead) * 2 microstepping
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -64,7 +56,7 @@ fn main() -> ! {
     let sender = reciever.create_sender();
 
     let mut parse_input = gcode_parser::Parser::new(sender);
-    let mut machine = Machine::new(DriverStaticStepDir{}, XYZData::from_clone(STEPPER_SPEED.clone()), ACCELERATION, XYZData::from_clone(RESOLUTION.clone()));
+    let mut machine = Machine::new(DriverStaticStepDir{});
 
     // command is g0 x100
     //let mut parsed = GcodeCommand::default();
@@ -74,6 +66,8 @@ fn main() -> ! {
     //let mut flipflip = false;
     //let mut next_command = parsed.clone();
     //let sender2 = reciever.create_sender();
+
+
 
     unsafe { avr_device::interrupt::enable(); }
 

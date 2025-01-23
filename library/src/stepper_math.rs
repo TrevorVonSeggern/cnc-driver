@@ -1,8 +1,12 @@
+use const_soft_float::soft_f32;
 // https://www.littlechip.co.nz/blog/a-simple-stepper-motor-control-algorithm
+#[allow(unused)]
 use micromath::F32Ext;
 
+use crate::{ACCELERATION, RESOLUTION, STEPPER_SPEED};
+
 #[allow(unused)]
-pub fn u64sqrt(x0: u64) -> u64 {
+pub const fn u64sqrt(x0: u64) -> u64 {
     let mut x = x0;
     let mut xr = 0; // result register
     let mut q2 = 0x4000_0000_0000_0000u64; // scan-bit register, set to highest possible result bit
@@ -21,7 +25,7 @@ pub fn u64sqrt(x0: u64) -> u64 {
 }
 
 #[allow(unused)]
-pub fn u32sqrt(x0: u32) -> u32 {
+pub const fn u32sqrt(x0: u32) -> u32 {
     let mut x = x0;
     let mut xr = 0; // result register
     let mut q2 = 0x4000_0000u32; // scan-bit register, set to highest possible result bit
@@ -39,10 +43,10 @@ pub fn u32sqrt(x0: u32) -> u32 {
     if xr < x { xr + 1 } else { xr }
 }
 
-pub fn first_step_delay<const SCALER: u32>(acc: u32) -> u32 {
+pub const fn first_step_delay<const SCALER: u32>(acc: u32) -> u32 {
     //let numerator:u32 = SCALER * 2;
     //(SCALER / 3) * u64sqrt(1000u64 / acc as u64)as u32
-    ((SCALER as f32) * (10.0 / acc as f32).sqrt()) as u32
+    ((SCALER as f32) * (soft_f32::SoftF32(10.0 / acc as f32)).sqrt().0) as u32
 }
 
 //pub fn first_step_delay(acc: f32) -> u32 {
@@ -53,13 +57,13 @@ pub fn first_step_delay<const SCALER: u32>(acc: u32) -> u32 {
     //(previous_delay as f32 * (fourx - 1.0)/(fourx + 1.0)) as u32
 //}
 
-pub fn inter_step_acc_delay(previous_delay: u32, step_number: u32) -> u32 {
+pub const fn inter_step_acc_delay(previous_delay: u32, step_number: u32) -> u32 {
     let fourx = 4 * step_number as u32;
     let numerator = fourx - 1;
     let denominator = fourx + 1;
     (previous_delay * numerator)/denominator
 }
-pub fn inter_step_dec_delay(previous_delay: u32, step_number: u32) -> u32 {
+pub const fn inter_step_dec_delay(previous_delay: u32, step_number: u32) -> u32 {
     let fourx = 4 * step_number as u32;
     let numerator = fourx + 1;
     let denominator = fourx - 1;
@@ -132,6 +136,31 @@ impl Iterator for StepIterator {
     }
 }
 
+pub const fn max_acc_size(acc: u32, slew: u32) -> usize {
+    let mut delay = first_step_delay::<1_000_000>(acc);
+    let mut i = 1;
+    loop {
+        delay = inter_step_acc_delay(delay, i as u32);
+        if delay <= slew {
+            return i;
+        }
+        i += 1;
+    }
+}
+
+pub const fn create_array<const SIZE: usize>(acc: u32) -> [u32; SIZE] {
+    let mut curve = [0; SIZE];
+    curve[0] = first_step_delay::<1_000_000>(acc);
+    let mut i = 1;
+    while i < SIZE {
+        curve[i] = inter_step_acc_delay(curve[i-1], i as u32);
+        i += 1;
+    }
+    return curve;
+}
+
+pub const ACC_CURVE_SIZE: usize = max_acc_size(ACCELERATION*RESOLUTION, 1_000_000 / (RESOLUTION * STEPPER_SPEED));
+pub const ACC_CURVE: [u32; ACC_CURVE_SIZE]  = create_array::<ACC_CURVE_SIZE>(ACCELERATION*RESOLUTION);
 
 #[cfg(test)]
 mod tests {
@@ -326,4 +355,20 @@ mod tests {
         //let guess_sum = first_step_delay(acc / (S as f32)) + first_delay;
         //assert_eq!(guess_sum, sum);
     //}
+
+    const ACC: u32 = 500;
+    const SPEED: u32 = 15;
+    const RES: u32 = 80;
+    const MAX_SIZE: usize = max_acc_size(ACC*RES, 1_000_000 / (RES*SPEED));
+    const ACC_TEST_TABLE: [u32; MAX_SIZE]  = create_array::<MAX_SIZE>(ACC*RES);
+
+    #[test]
+    fn timing_init_then_uninit() {
+        //let table = ACC_TEST_TABLE;
+        //assert_eq!(table[0], 1);
+        assert_eq!(MAX_SIZE, 173);
+        assert_eq!(ACC_TEST_TABLE[0], 15811);
+        assert_eq!(ACC_TEST_TABLE[1], 9486);
+        assert_eq!(ACC_TEST_TABLE[172], 834);
+    }
 }

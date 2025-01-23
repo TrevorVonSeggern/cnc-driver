@@ -11,8 +11,9 @@ mod xyz;
 mod channel;
 mod containers;
 mod stepper;
+mod machine;
+mod settings;
 
-//pub use crate::numbers::*;
 pub use crate::lexer::*;
 pub use crate::parser::*;
 pub use crate::rules::*;
@@ -22,4 +23,5 @@ pub use crate::stepper_math::*;
 pub use crate::channel::*;
 pub use crate::containers::*;
 pub use crate::stepper::*;
-//pub use crate::log::*;
+pub use crate::machine::*;
+pub use crate::settings::*;

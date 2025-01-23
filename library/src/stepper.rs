@@ -135,8 +135,8 @@ mod tests {
         pub current_dir: bool,
     }
     impl StepDir for CounterStepper {
-        fn step(&mut self, axis: XYZId) { self.current_step += 1; }
-        fn dir(&mut self, axis: XYZId, direction: bool) { self.current_dir = direction; }
+        fn step(&mut self, _: XYZId) { self.current_step += 1; }
+        fn dir(&mut self, _: XYZId, direction: bool) { self.current_dir = direction; }
     }
 
     static ACC_TABLE: &[u32] = &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1 ];
@@ -220,10 +220,10 @@ mod tests {
         for i in 0..10 { // move loop
             let target = if i % 2 == 0 { 10 } else { 0 };
             stepper.set_target(target, 100_000); // 1 step every 10.
-            for t in 0..100 { // poll loop
+            for _ in 0..100 { // poll loop
                 total_time += 100;
                 stepper.poll_task(total_time);
-                let time_diff = stepper.timing.next_update_time.saturating_sub(total_time);
+                //let time_diff = stepper.timing.next_update_time.saturating_sub(total_time);
 
                 if stepper.on_target() {
                     break;
