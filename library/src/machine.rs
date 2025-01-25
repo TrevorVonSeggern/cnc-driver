@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use crate::{ArgumentMnumonic, CanRecieve, CommandId, CommandMnumonics, GcodeCommand, StepDir, Stepper, XYZData, XYZId, ACC_CURVE, RESOLUTION, STEPPER_SPEED};
+use crate::{u32sqrt, ArgumentMnumonic, CanRecieve, CommandId, CommandMnumonics, GcodeCommand, StepDir, Stepper, XYZData, XYZId, ACC_CURVE, RESOLUTION, STEPPER_SPEED};
 
 pub enum AbsMode {
     Abs,
@@ -41,39 +41,39 @@ impl<SD: StepDir> Machine<SD>
         if target.all(|v| v.is_none()) || speed == 0 {
             return;
         }
-        if let Some(x) = target.x {
-            self.steppers.x.set_target(x, speed);
+        let abs_offset = match self.abs_mode {
+            AbsMode::Relative => Default::default(),
+            AbsMode::Abs => XYZData {
+                x: self.steppers.x.get_position() + self.home_offset.z,
+                y: self.steppers.y.get_position() + self.home_offset.y,
+                z: self.steppers.z.get_position() + self.home_offset.x
+            },
+        };
+        let displacement = XYZData {
+            x: target.x.map(|x| x - abs_offset.x).unwrap_or_default(),
+            y: target.y.map(|y| y - abs_offset.y).unwrap_or_default(),
+            z: target.z.map(|z| z - abs_offset.z).unwrap_or_default(),
+            //x: target.x.map(|x| x - abs_offset.x),
+            //y: target.y.map(|y| y - abs_offset.y),
+            //z: target.z.map(|z| z - abs_offset.z),
+        };
+        let move_distance = u32sqrt(displacement.iter().map(|v| (v * v) as u32).sum());
+        if move_distance == 0 {
+            return;
         }
-        //let abs_offset = match self.abs_mode {
-            //AbsMode::Relative => Default::default(),
-            //AbsMode::Abs => XYZData {
-                //x: self.steppers.x.get_position() + self.home_offset.z,
-                //y: self.steppers.y.get_position() + self.home_offset.y,
-                //z: self.steppers.z.get_position() + self.home_offset.x
-            //},
-        //};
-        //let displacement = XYZData {
-            //x: target.x.map(|x| x - abs_offset.x).unwrap_or_default(),
-            //y: target.y.map(|y| y - abs_offset.y).unwrap_or_default(),
-            //z: target.z.map(|z| z - abs_offset.z).unwrap_or_default(),
-        //};
-        //let move_distance = u32sqrt(displacement.iter().map(|v| (v * v) as u32).sum());
-        //if move_distance == 0 {
-            //return;
-        //}
-        //let move_distance = move_distance as f32;
-        //let altered_speed_fn = |distance: i32| -> u32 {
-            //(speed as f32 * (distance as f32 / move_distance)) as u32
-        //};
-        //if displacement.x != 0 {
-            //self.steppers.x.set_target(displacement.x + abs_offset.x, altered_speed_fn(displacement.x));
-        //}
-        //if displacement.y != 0 {
-            //self.steppers.y.set_target(displacement.y + abs_offset.y, altered_speed_fn(displacement.y));
-        //}
-        //if displacement.z != 0 {
-            //self.steppers.z.set_target(displacement.z + abs_offset.z, altered_speed_fn(displacement.z));
-        //}
+        let move_distance = move_distance as f64;
+        let altered_speed_fn = |distance: i32| -> u32 {
+            (speed as f64 * (distance.abs() as f64 / move_distance)) as u32
+        };
+        if displacement.x != 0 {
+            self.steppers.x.set_target(displacement.x + abs_offset.x, altered_speed_fn(displacement.x));
+        }
+        if displacement.y != 0 {
+            self.steppers.y.set_target(displacement.y + abs_offset.y, altered_speed_fn(displacement.y));
+        }
+        if displacement.z != 0 {
+            self.steppers.z.set_target(displacement.z + abs_offset.z, altered_speed_fn(displacement.z));
+        }
     }
 
     fn feed_argument<'a>(&self, args: &GcodeCommand) -> Option<u32> {
@@ -153,5 +153,118 @@ impl<SD: StepDir> Machine<SD>
 
 #[cfg(test)]
 mod tests {
+    use crate::*;
+
     use super::*;
+    #[derive(Default, Clone, Copy, Debug)]
+    struct CounterStepper {
+        pub current_step: u32,
+        pub current_dir: bool,
+    }
+    impl StepDir for CounterStepper {
+        fn step(&mut self, _: XYZId) { self.current_step += 1; }
+        fn dir(&mut self, _: XYZId, direction: bool) { self.current_dir = direction; }
+    }
+
+    #[test]
+    pub fn machine_can_init() {
+        let gcode_channel = SplitChannel::new(crate::Channel::<GcodeCommand, 3>::default());
+        let gcode_input = gcode_channel.create_sender();
+        let mut gcode: GcodeCommand = Default::default();
+        gcode.command_id = CommandId{ mnumonic: CommandMnumonics::G, major: 0, minor: 0 };
+        let mut x_arg: CommandArgument = Default::default();
+        x_arg.mnumonic = ArgumentMnumonic::X;
+        x_arg.value.float = 1.23;
+        x_arg.value.major = 1;
+        x_arg.value.minor = 23;
+        gcode.arguments.push(x_arg);
+        let _ = gcode_input.send(gcode);
+        let mut machine = Machine::new(CounterStepper::default());
+        machine.poll_task(&gcode_channel);
+        machine.step_monitor(1, XYZId::X);
+        let x_first_time = machine.steppers.x.timing.next_update_time.clone() as u32;
+        assert_eq!(x_first_time, ACC_CURVE[0] + 1, "Straight move. First delay in acc curve.");
+        assert!(!machine.steppers.x.on_target(), "Move requires movement.");
+    }
+
+    fn move_command(axis: XYZId, f:f32) -> GcodeCommand {
+        let mut gcode: GcodeCommand = Default::default();
+        gcode.command_id = CommandId{ mnumonic: CommandMnumonics::G, major: 0, minor: 0 };
+        let arg: CommandArgument = CommandArgument {
+            mnumonic: axis.into(),
+            value: MajorMinorNumber {
+                major: f as i32, minor: 0, float: f,
+            },
+        };
+        gcode.arguments.push(arg);
+        gcode
+    }
+
+    #[test]
+    pub fn machine_forward_and_back() {
+        let gcode_channel = SplitChannel::new(crate::Channel::<GcodeCommand, 3>::default());
+        let gcode_input = gcode_channel.create_sender();
+        let gcode_x1: GcodeCommand = move_command(XYZId::X, 1.0);
+        let gcode_x0: GcodeCommand = move_command(XYZId::X, 0.0);
+        let mut machine = Machine::new(CounterStepper::default());
+
+        let _ = gcode_input.send(gcode_x1);
+        machine.poll_task(&gcode_channel);
+        machine.step_monitor(1, XYZId::X);
+        assert!(!machine.steppers.x.on_target(), "Move requires movement. 1");
+        for i in 2..100000 {
+            machine.step_monitor(i * 10, XYZId::X);
+            if machine.steppers.x.on_target() {
+                break;
+            }
+        }
+        assert!(machine.steppers.x.on_target(), "should be on target 10.");
+
+        let _ = gcode_input.send(gcode_x0);
+        machine.poll_task(&gcode_channel);
+        machine.step_monitor(1, XYZId::X);
+        assert!(!machine.steppers.x.on_target(), "Move requires movement. 0");
+        for i in 2..100000 {
+            machine.step_monitor(i * 10, XYZId::X);
+            if machine.steppers.x.on_target() {
+                break;
+            }
+        }
+        assert!(machine.steppers.x.on_target(), "should be on target 0.");
+    }
+
+    #[test]
+    pub fn machine_xy() {
+        let gcode_channel = SplitChannel::new(crate::Channel::<GcodeCommand, 3>::default());
+        let gcode_input = gcode_channel.create_sender();
+        let mut gcode: GcodeCommand = move_command(XYZId::X, 1.0);
+        gcode.arguments.push(move_command(XYZId::Y, 10.0).arguments.first().unwrap().clone());
+        let mut machine = Machine::new(CounterStepper::default());
+        let _ = gcode_input.send(gcode);
+        machine.poll_task(&gcode_channel);
+        machine.step_monitor(1, XYZId::X);
+        machine.step_monitor(1, XYZId::Y);
+        assert!(!machine.steppers.x.on_target(), "Move requires movement. 1");
+        let mut i_x = 0;
+        let mut i_y = 0;
+        for i in 2..100000 {
+            machine.step_monitor(i * 10, XYZId::X);
+            machine.step_monitor(i * 10, XYZId::Y);
+            if machine.steppers.x.on_target() {
+                i_x = i;
+            }
+            if machine.steppers.y.on_target() {
+                i_y = i;
+            }
+            if machine.steppers.x.on_target() && machine.steppers.y.on_target() {
+                break;
+            }
+        }
+        assert_eq!(i_x, i_y, "X and Y should end near each other.");
+        assert_ne!(i_x, 0, "X should end at a non zero iteration");
+        assert_ne!(i_y, 0, "Y should end at a non zero iteration");
+        assert_eq!(machine.steppers.x.get_position(), 1 * RESOLUTION as i32, "XPosition");
+        assert_eq!(machine.steppers.y.get_position(), 10 * RESOLUTION as i32, "YPosition");
+        assert!(machine.steppers.x.on_target(), "should be on target 10.");
+    }
 }

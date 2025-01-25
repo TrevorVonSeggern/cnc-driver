@@ -1,7 +1,9 @@
 use core::str::FromStr;
 use arrayvec::ArrayVec;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+use crate::XYZId;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CommandMnumonics {
     Unknown = 0,
     #[default]
@@ -47,12 +49,20 @@ impl FromStr for ArgumentMnumonic {
             Some('Y') => Ok(ArgumentMnumonic::Y),
             Some('Z') => Ok(ArgumentMnumonic::Z),
             _ => Err(ParseArgMnumonicError{}),
-
+        }
+    }
+}
+impl From<XYZId> for ArgumentMnumonic {
+    fn from(value: XYZId) -> Self {
+        match value {
+            XYZId::X => ArgumentMnumonic::X,
+            XYZId::Y => ArgumentMnumonic::Y,
+            XYZId::Z => ArgumentMnumonic::Z,
         }
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CommandId {
     pub mnumonic: CommandMnumonics,
     pub major: u16,

@@ -54,7 +54,7 @@ impl<SD: StepDir> Stepper<SD>{
     pub fn get_position(&self) -> i32 { self.step_iter.position }
 
     pub fn set_target(&mut self, target_step: i32, speed: u32) {
-        let slew_delay_us = 1_000_000 / speed as u32;
+        let slew_delay_us = 1_000_000 / speed;
         self.step_iter.set_target(target_step, slew_delay_us, 0);
         self.step_dir_fn.dir(self.axis, self.step_iter.direction.is_negative());
     }
