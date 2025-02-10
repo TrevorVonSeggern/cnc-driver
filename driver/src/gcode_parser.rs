@@ -1,6 +1,6 @@
 use core::str::from_utf8_unchecked;
 use arrayvec::ArrayVec;
-use library::{CanSend, GcodeCommand, CircularBuffer};
+use library::{CanSend, CircularBuffer, GcodeCommand, ParseUnion};
 use crate::{pins::{write_uart, READER}, write_uart_u8};
 use embedded_hal::serial::Read;
 
@@ -43,6 +43,7 @@ impl<F> Parser<F>
         if self.input_bufer.remaining_capacity() > 0 && !unsafe{RX_BUFFER.is_empty()} {
             avr_device::interrupt::free(|_| {
                 for b in unsafe{RX_BUFFER.consume()} {
+                    //write_uart_u8(&[b]);
                     let r = self.input_bufer.try_push(b);
                     if r.is_err() {
                         break;
@@ -62,19 +63,22 @@ impl<F> Parser<F>
         if self.to_send.is_some() || self.input_bufer.len() == 0 {
             return;
         }
-        let nl_index = self.input_bufer.iter().position(|&c| c == b'\n');
-        if let Some(nl_index) = nl_index {
-            if nl_index > 0 {
-                let to_parse = self.input_bufer.split_at(nl_index).0;
-                let parsed = library::parse(unsafe{from_utf8_unchecked(to_parse)});
-                self.to_send = parsed.map_err(|err| {
+        let endl_index = self.input_bufer.iter().position(|&c| c == b'\n' || c == b'\r');
+        if let Some(endl_index) = endl_index {
+            if endl_index > 0 {
+                let to_parse = self.input_bufer.split_at(endl_index).0;
+                let parse_result = library::parse(unsafe{from_utf8_unchecked(to_parse)});
+                if let Ok(ParseUnion::GCodeCommand(parsed)) = parse_result {
+                    self.to_send = Some(parsed);
+                }
+                else if let Err(err) = parse_result {
                     write_uart("unrecognized command: ");
                     write_uart(&err);
                     write_uart("\n");
                     write_uart_u8(&to_parse);
-                }).ok();
+                }
             }
-            self.input_bufer.drain(0..nl_index+1);
+            self.input_bufer.drain(0..endl_index+1);
         }
         //if let Ok(parsed) = parsed {
             //ufmt::uwriteln!(&mut serial_writer, "parsed gcode {}.{}", parsed.command_id.major, parsed.command_id.minor).unwrap();

@@ -41,23 +41,12 @@ impl<SD: StepDir> Machine<SD>
         if target.all(|v| v.is_none()) || speed == 0 {
             return;
         }
-        let abs_offset = match self.abs_mode {
-            AbsMode::Relative => Default::default(),
-            AbsMode::Abs => XYZData {
-                x: self.steppers.x.get_position() + self.home_offset.z,
-                y: self.steppers.y.get_position() + self.home_offset.y,
-                z: self.steppers.z.get_position() + self.home_offset.x
-            },
-        };
-        let displacement = XYZData {
-            x: target.x.map(|x| x - abs_offset.x).unwrap_or_default(),
-            y: target.y.map(|y| y - abs_offset.y).unwrap_or_default(),
-            z: target.z.map(|z| z - abs_offset.z).unwrap_or_default(),
-            //x: target.x.map(|x| x - abs_offset.x),
-            //y: target.y.map(|y| y - abs_offset.y),
-            //z: target.z.map(|z| z - abs_offset.z),
-        };
-        let move_distance = u32sqrt(displacement.iter().map(|v| (v * v) as u32).sum());
+        let current_position = self.steppers.map(|s| s.get_position());
+        let move_vector = match self.abs_mode {
+            AbsMode::Relative => target,
+            AbsMode::Abs => target + self.home_offset - current_position.clone(),
+        }.map(|p| p.unwrap_or_default());
+        let move_distance = u32sqrt(move_vector.iter().map(|v| (v * v) as u32).sum());
         if move_distance == 0 {
             return;
         }
@@ -65,20 +54,20 @@ impl<SD: StepDir> Machine<SD>
         let altered_speed_fn = |distance: i32| -> u32 {
             (speed as f64 * (distance.abs() as f64 / move_distance)) as u32
         };
-        if displacement.x != 0 {
-            self.steppers.x.set_target(displacement.x + abs_offset.x, altered_speed_fn(displacement.x));
+        if move_vector.x != 0 {
+            self.steppers.x.set_target(move_vector.x + current_position.x, altered_speed_fn(move_vector.x));
         }
-        if displacement.y != 0 {
-            self.steppers.y.set_target(displacement.y + abs_offset.y, altered_speed_fn(displacement.y));
+        if move_vector.y != 0 {
+            self.steppers.y.set_target(move_vector.y + current_position.y, altered_speed_fn(move_vector.y));
         }
-        if displacement.z != 0 {
-            self.steppers.z.set_target(displacement.z + abs_offset.z, altered_speed_fn(displacement.z));
+        if move_vector.z != 0 {
+            self.steppers.z.set_target(move_vector.z + current_position.z, altered_speed_fn(move_vector.z));
         }
     }
 
-    fn feed_argument<'a>(&self, args: &GcodeCommand) -> Option<u32> {
+    fn feed_argument<'a>(args: &GcodeCommand) -> Option<u32> {
         let args = args.arguments.iter();
-        args.filter(|a| a.mnumonic == ArgumentMnumonic::F).next().map(|a| a.value.major as u32)
+        args.filter(|a| a.mnumonic == ArgumentMnumonic::F).next().map(|a| ((a.value.float * 60.0 / (RESOLUTION as f32)) as u32))
     }
 
     fn setup_next_target(&mut self) {
@@ -91,8 +80,8 @@ impl<SD: StepDir> Machine<SD>
                             *target.match_id_mut(id) = Some((arg.value.float * RES_F32) as i32);
                         }
                     }
-                    self.feed_rate = self.feed_argument(&command).unwrap_or(self.feed_rate);
-                    self.move_command(target, self.max_feed_rate.clone());
+                    let feed_rate = Self::feed_argument(&command).unwrap_or(self.max_feed_rate);
+                    self.move_command(target, feed_rate);
                 },
                 CommandId{ mnumonic: CommandMnumonics::G, major: 1, minor: 0 } => {
                     let mut target = XYZData::<Option<i32>>::default();
@@ -101,8 +90,8 @@ impl<SD: StepDir> Machine<SD>
                             *target.match_id_mut(id) = Some((arg.value.float * RES_F32) as i32);
                         }
                     }
-                    self.feed_rate = self.feed_argument(&command).unwrap_or(self.feed_rate);
-                    self.move_command(target, self.feed_rate.clone());
+                    self.feed_rate = Self::feed_argument(&command).unwrap_or(self.feed_rate);
+                    self.move_command(target, self.feed_rate);
                 },
                 CommandId{ mnumonic: CommandMnumonics::G, major: 9, minor: 2 } => {
                     for arg in command.arguments.iter() {
@@ -111,13 +100,19 @@ impl<SD: StepDir> Machine<SD>
                         }
                     }
                 },
-                CommandId{ mnumonic: CommandMnumonics::G, major: 9, minor: 0 } => {
+                CommandId{ mnumonic: CommandMnumonics::G, major: 90, minor: _ } => {
                     self.abs_mode = AbsMode::Abs;
                 },
-                CommandId{ mnumonic: CommandMnumonics::G, major: 9, minor: 1 } => {
+                CommandId{ mnumonic: CommandMnumonics::G, major: 91, minor: _ } => {
                     self.abs_mode = AbsMode::Relative;
                 },
-                _ => todo!("do no know how to process command."),
+                CommandId{ mnumonic: CommandMnumonics::G, major: 21, minor: _ } => {},
+                CommandId{ mnumonic: CommandMnumonics::G, major: 20, minor: _ } => { todo!("Inch mode not supported.")},
+                CommandId{ mnumonic: CommandMnumonics::M, major: 30, minor: _ } => { 
+                    self.feed_rate = self.max_feed_rate;
+                },
+                CommandId{ mnumonic: CommandMnumonics::M, major: _, minor: _ } => {},
+                _ => { /*todo!("do no know how to process command.")*/ },
             }
         }
         else {
@@ -189,7 +184,7 @@ mod tests {
 
     fn move_command(axis: XYZId, f:f32) -> GcodeCommand {
         let mut gcode: GcodeCommand = Default::default();
-        gcode.command_id = CommandId{ mnumonic: CommandMnumonics::G, major: 0, minor: 0 };
+        gcode.command_id = CommandId{ mnumonic: CommandMnumonics::G, major: 1, minor: 0 };
         let arg: CommandArgument = CommandArgument {
             mnumonic: axis.into(),
             value: MajorMinorNumber {
@@ -266,5 +261,22 @@ mod tests {
         assert_eq!(machine.steppers.x.get_position(), 1 * RESOLUTION as i32, "XPosition");
         assert_eq!(machine.steppers.y.get_position(), 10 * RESOLUTION as i32, "YPosition");
         assert!(machine.steppers.x.on_target(), "should be on target 10.");
+    }
+
+    #[test]
+    pub fn machine_specify_feedrate() {
+        let gcode_channel = SplitChannel::new(crate::Channel::<GcodeCommand, 3>::default());
+        let gcode_input = gcode_channel.create_sender();
+        let mut gcode: GcodeCommand = move_command(XYZId::X, 10.0);
+        gcode.arguments.push(CommandArgument { mnumonic: ArgumentMnumonic::F, value: MajorMinorNumber { major: 100, minor: 0, float: 100.0 } });
+        let mut machine = Machine::new(CounterStepper::default());
+        let default_feed_rate = machine.max_feed_rate.clone();
+        let _ = gcode_input.send(gcode);
+        assert_ne!(default_feed_rate, (100.0 * 60.0 / RES_F32) as u32, "Debug test assert, test feed rate should not be default.");
+        machine.poll_task(&gcode_channel);
+        machine.step_monitor(1, XYZId::X);
+
+        assert_ne!(machine.steppers.x.get_target(), 0, "Debug test assert. Target needs to be set for feed rate.");
+        assert_ne!(machine.feed_rate, default_feed_rate, "Machine feed rate should be changed.");
     }
 }

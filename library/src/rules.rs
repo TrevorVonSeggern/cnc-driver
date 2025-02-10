@@ -2,15 +2,23 @@ use core::str::FromStr;
 use arrayvec::ArrayVec;
 use crate::{ast::{CommandArgument, CommandId, CommandMnumonics, GcodeCommand, MajorMinorNumber}, parser::ParserStackAlloc, ArgumentMnumonic, LexResult, LexerStackAlloc, LexerTrait, Rule, StateList, StateListStackAlloc};
 
-const LEXER_SIZE: usize = 5;
-pub fn parse(source: &str) -> Result<GcodeCommand, &'static str> {
-    let lexer = LexerStackAlloc::<ParseUnion, LEXER_SIZE> {
+const LEXER_SIZE: usize = 7;
+const fn lexer_ctor() -> LexerStackAlloc::<'static, ParseUnion, LEXER_SIZE> {
+    LexerStackAlloc::<ParseUnion, LEXER_SIZE> {
         rules: [
             &|s| if s.starts_with(" "){ Some(LexResult{poped_chars: 1, result: ParseUnion::None }) } else { None },
             &|s| if s.starts_with("\n"){ Some(LexResult{poped_chars: 1, result: ParseUnion::NL }) } else { None },
+            &|s| if s.starts_with("\r"){ Some(LexResult{poped_chars: 1, result: ParseUnion::NL }) } else { None },
+            &|s| {
+                let regex = safe_regex::regex!(br"([;].*)[\r\n].*");
+                if let Some(comment) = regex.match_slices(s.as_bytes()) {
+                    Some(LexResult{ poped_chars: comment.0.len(), result: ParseUnion::None})
+                }
+                else { None }
+            },
             &|s| ArgumentMnumonic::from_str(s).ok().map(|arg| LexResult{poped_chars: 1, result: ParseUnion::ArgId(arg) }),
             &|s| {
-                let regex = safe_regex::regex!(br"([GMN]) ?([0-9])(\.[0-9])?.*");
+                let regex = safe_regex::regex!(br"([GMN]) ?([0-9]+)(\.[0-9])?.*");
                 if let Some((id_slice, int_slice, decimal_slice)) = regex.match_slices(s.as_bytes()) {
                     let id_str = unsafe{core::str::from_utf8_unchecked(id_slice)};
                     let num_str = unsafe{core::str::from_utf8_unchecked(int_slice)};
@@ -60,8 +68,12 @@ pub fn parse(source: &str) -> Result<GcodeCommand, &'static str> {
                 else { None }
             },
         ],
-    };
-    let parser = ParserStackAlloc::<'_, ParseUnion, ParseTypeId, 5> {
+    }
+}
+
+const PARSER_SIZE: usize = 6;
+const fn parser_ctor() -> ParserStackAlloc<'static, ParseUnion, ParseTypeId, PARSER_SIZE> {
+    ParserStackAlloc {
         rules: [
             Rule{id: ParseTypeId::Arg, pattern: &[ParseTypeId::ArgId, ParseTypeId::Number], func: &|data| {
                 match data {
@@ -102,14 +114,27 @@ pub fn parse(source: &str) -> Result<GcodeCommand, &'static str> {
                     _ => None,
                 }
             }},
+            Rule{id: ParseTypeId::ParsedCommand, pattern: &[ParseTypeId::CommandId], func: &|data| {
+                match data {
+                    [ParseUnion::GCodeCommandId(id)] => {
+                        Some(ParseUnion::GCodeCommand(GcodeCommand{command_id: id.clone(), arguments: Default::default()}))
+                    },
+                    _ => None,
+                }
+            }},
             Rule{id: ParseTypeId::ParsedCommand, pattern: &[ParseTypeId::ParsedCommand, ParseTypeId::NL], func: &|data| {
                 Some(core::mem::take(&mut data[0]))
             }},
         ]
-    };
+    }
+}
+
+pub fn parse(source: &str) -> Result<ParseUnion, &'static str> {
+    const LEXER: LexerStackAlloc<'static, ParseUnion, LEXER_SIZE> = lexer_ctor();
+    const PARSER: ParserStackAlloc<'_, ParseUnion, ParseTypeId, PARSER_SIZE> = parser_ctor();
 
     let mut state = StateListStackAlloc::<ParseUnion, ParseTypeId, 30>::new();
-    for lexed in lexer.iter(source) {
+    for lexed in LEXER.iter(source) {
         let id = match lexed.result {
             ParseUnion::None => ParseTypeId::NoOp,
             ParseUnion::SignedNumber(_) => ParseTypeId::Number,
@@ -123,11 +148,13 @@ pub fn parse(source: &str) -> Result<GcodeCommand, &'static str> {
             state.push(id, lexed.result);
         }
     }
-    parser.parse(&mut state);
-    match state.data.iter().next() {
-        Some(ParseUnion::GCodeCommand(command)) => Ok(command.clone()),
-        None => Err("Empty gcode state data."),
-        _ => Err("No command to be returned."),
+    PARSER.parse(&mut state);
+    let first_gcode = state.data.iter().filter(|&c| matches!(c, ParseUnion::GCodeCommand(_))).next();
+    if let Some(result) = first_gcode {
+        Ok(result.clone())
+    }
+    else {
+        Ok(state.data.first().cloned().unwrap_or(ParseUnion::None))
     }
     //return Ok(GcodeCommand{command_id: CommandId { mnumonic: CommandMnumonics::Unknown, major: 1, minor: 2 }, arguments: Default::default()});
 }
@@ -139,7 +166,7 @@ pub fn parse(source: &str) -> Result<GcodeCommand, &'static str> {
     //}
 //}
 
-#[derive(PartialEq, Clone, Default)]
+#[derive(PartialEq, Clone, Default, Debug)]
 pub enum ParseUnion {
     #[default]
     None,
@@ -177,7 +204,7 @@ mod test {
             assert_eq!(e, "");
         }
         assert!(parsed.is_ok());
-        if let Ok(parsed) = parsed {
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
             assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
             assert_eq!(parsed.command_id.major, 0);
             assert_eq!(parsed.command_id.minor, 0);
@@ -204,7 +231,7 @@ mod test {
             assert_eq!(e, "");
         }
         assert!(parsed.is_ok());
-        if let Ok(parsed) = parsed {
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
             assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
             assert_eq!(parsed.command_id.major, 1);
             assert_eq!(parsed.command_id.minor, 0);
@@ -223,6 +250,182 @@ mod test {
             assert_eq!(z.value.major, 3);
             assert_eq!(z.value.minor, 3);
             assert_eq!(z.value.float, 3.3);
+        }
+    }
+
+    #[test]
+    fn test_g0nl() {
+        let source = "G0 X1\n";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 0);
+            assert_eq!(parsed.command_id.minor, 0);
+            let x = parsed.arguments[0].clone();
+            assert!(x.mnumonic == ArgumentMnumonic::X);
+            assert_eq!(x.value.major, 1);
+            assert_eq!(x.value.minor, 0);
+        }
+    }
+
+
+    #[test]
+    fn test_g0cr() {
+        let source = "G0 X1\r";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 0);
+            assert_eq!(parsed.command_id.minor, 0);
+            let x = parsed.arguments[0].clone();
+            assert!(x.mnumonic == ArgumentMnumonic::X);
+            assert_eq!(x.value.major, 1);
+            assert_eq!(x.value.minor, 0);
+        }
+    }
+
+    #[test]
+    fn test_g0_feed_rate() {
+        let source = "G0 X1 F12r";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 0);
+            assert_eq!(parsed.command_id.minor, 0);
+            let f = parsed.arguments[1].clone();
+            assert!(f.mnumonic == ArgumentMnumonic::F);
+            assert_eq!(f.value.major, 12);
+            assert_eq!(f.value.minor, 0);
+        }
+    }
+
+    #[test]
+    fn test_g0crlf() {
+        let source = "G0 X1\r\n";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 0);
+            assert_eq!(parsed.command_id.minor, 0);
+            let x = parsed.arguments[0].clone();
+            assert!(x.mnumonic == ArgumentMnumonic::X);
+            assert_eq!(x.value.major, 1);
+            assert_eq!(x.value.minor, 0);
+        }
+    }
+
+    #[test]
+    fn test_m115() {
+        let source = "M115\n";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::M);
+            assert_eq!(parsed.command_id.major, 115);
+            assert_eq!(parsed.command_id.minor, 0);
+        }
+    }
+
+    #[test]
+    fn test_g91() {
+        let source = "G91\n";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 91);
+            assert_eq!(parsed.command_id.minor, 0);
+        }
+    }
+
+    #[test]
+    fn test_g90() {
+        let source = "G90\n";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 90);
+            assert_eq!(parsed.command_id.minor, 0);
+        }
+    }
+
+    #[test]
+    fn test_starting_newline_g90() {
+        let source = "\nG90\n";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 90);
+            assert_eq!(parsed.command_id.minor, 0);
+        }
+    }
+
+    #[test]
+    fn lexer_comment() {
+        let source = ";hi\n";
+        let lexer = lexer_ctor();
+        let lexed:ArrayVec<_, 100> = lexer.iter(source).collect();
+        assert_eq!(lexed.len(), 2);
+        assert_eq!(ParseUnion::None, lexed[0].result, "comments should be lexed as a no op.");
+        assert_eq!(ParseUnion::NL, lexed[1].result, "Comment doesn't eat the newline.");
+    }
+
+    #[test]
+    fn lexer_comment_not_overrun_command() {
+        let source = ";hi\nG90";
+        let lexer = lexer_ctor();
+        let lexed:ArrayVec<_, 100> = lexer.iter(source).collect();
+        assert_eq!(lexed.len(), 3);
+        assert_eq!(ParseUnion::None, lexed[0].result, "comments should be lexed as a no op.");
+        assert_eq!(ParseUnion::NL, lexed[1].result);
+
+        let mut g90: GcodeCommand = Default::default();
+        g90.command_id = CommandId{ mnumonic: CommandMnumonics::G, major: 90, minor: 0 };
+        assert_eq!(lexed[2].result, ParseUnion::GCodeCommandId(g90.command_id), "Should still have the g90 command.");
+    }
+
+    #[test]
+    fn test_trailing_comment_g90() {
+        let source = "G90;hi\n";
+        let parsed = parse(source);
+        if let Err(e) = parsed {
+            assert_eq!(e, "");
+        }
+        assert!(parsed.is_ok());
+        if let Ok(ParseUnion::GCodeCommand(parsed)) = parsed {
+            assert!(parsed.command_id.mnumonic == CommandMnumonics::G);
+            assert_eq!(parsed.command_id.major, 90);
+            assert_eq!(parsed.command_id.minor, 0);
         }
     }
 }

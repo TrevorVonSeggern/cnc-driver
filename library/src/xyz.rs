@@ -1,4 +1,4 @@
-use core::{iter::once, ops::Mul};
+use core::{iter::once, ops::{Add, Mul, Sub}};
 
 use crate::ArgumentMnumonic;
 
@@ -12,12 +12,57 @@ pub enum XYZOne<T> {
     Y(T),
     Z(T),
 }
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct XYZData<T> {
     pub x: T,
     pub y: T,
     pub z: T,
 }
+
+impl<T> Add for XYZData<T> where T: Add::<Output=T> {
+    type Output=XYZData<T>;
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+            z: self.z + rhs.z,
+        }
+    }
+}
+
+impl<T> Add<XYZData<T>> for XYZData<Option<T>> where T: Add::<Output=T> {
+    type Output=XYZData<Option<T>>;
+    fn add(self, rhs: XYZData<T>) -> Self::Output {
+        Self {
+            x: self.x.map(|x| x + rhs.x),
+            y: self.y.map(|y| y + rhs.y),
+            z: self.z.map(|z| z + rhs.z),
+        }
+    }
+}
+
+impl<T> Sub for XYZData<T> where T: Sub::<Output=T> {
+    type Output=XYZData<T>;
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+            z: self.z - rhs.z,
+        }
+    }
+}
+
+impl<T> Sub<XYZData<T>> for XYZData<Option<T>> where T: Sub::<Output=T> {
+    type Output=XYZData<Option<T>>;
+    fn sub(self, rhs: XYZData<T>) -> Self::Output {
+        Self {
+            x: self.x.map(|x| x - rhs.x),
+            y: self.y.map(|y| y - rhs.y),
+            z: self.z.map(|z| z - rhs.z),
+        }
+    }
+}
+
 
 impl<T> Mul for XYZData<T> where T: Mul::<Output=T> {
     type Output=XYZData<T>;
